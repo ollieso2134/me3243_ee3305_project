@@ -6,6 +6,7 @@ from rclpy.qos import qos_profile_sensor_data, qos_profile_services_default
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import LaserScan
+from std_msgs.msg import Bool
 
 
 class Controller(Node):
@@ -36,6 +37,11 @@ class Controller(Node):
             Path, "path", self.callbackSubPath_, 10
         )
 
+        # Stop / Emergency Stop subscriber
+        self.sub_stop_ = self.create_subscription(
+            Bool, "stop", self.callbackSubStop_, 10
+        )
+
         # Odometry subscriber
         self.sub_odom_ = self.create_subscription(
             Odometry, "odom", self.callbackSubOdom_, 10
@@ -58,6 +64,7 @@ class Controller(Node):
         # Other Instance Variables
         self.received_odom_ = False
         self.received_path_ = False
+        self.is_stopped_ = False
         self.rbt_x_ = 0.0
         self.rbt_y_ = 0.0
         self.rbt_yaw_ = 0.0
@@ -67,13 +74,36 @@ class Controller(Node):
     
     # Path subscriber callback
     def callbackSubPath_(self, msg: Path):
-        if len(msg.poses) == 0:  # not msg.poses is fine but not clear
-            self.get_logger().warn(f"Received path message is empty!")
-            return  # do not update the path if no path is returned. This will ensure the copied path contains at least one point when the first non-empty path is received.
+        if len(msg.poses) == 0:
+            self.path_poses_ = []
+            self.received_path_ = False
+            self.is_stopped_ = True
+            msg_stop = TwistStamped()
+            msg_stop.header.stamp = self.get_clock().now().to_msg()
+            msg_stop.twist.linear.x = 0.0
+            msg_stop.twist.angular.z = 0.0
+            self.pub_cmd_vel_.publish(msg_stop)
+            self.get_logger().info("Received empty path: controller halted.")
+            return
 
+        self.is_stopped_ = False
         self.path_poses_ = msg.poses
-
         self.received_path_ = True
+
+    # Stop subscriber callback
+    def callbackSubStop_(self, msg: Bool):
+        if msg.data:
+            self.path_poses_ = []
+            self.received_path_ = False
+            self.is_stopped_ = True
+            msg_stop = TwistStamped()
+            msg_stop.header.stamp = self.get_clock().now().to_msg()
+            msg_stop.twist.linear.x = 0.0
+            msg_stop.twist.angular.z = 0.0
+            self.pub_cmd_vel_.publish(msg_stop)
+            self.get_logger().warn("Controller received STOP signal: cleared path and halted robot.")
+        else:
+            self.is_stopped_ = False
 
     # Odometry subscriber callback
     def callbackSubOdom_(self, msg: Odometry):
@@ -127,8 +157,8 @@ class Controller(Node):
 
     # Implement the pure pursuit controller here
     def callbackTimer_(self):
-        if not self.received_odom_ or not self.received_path_ or len(self.path_poses_) == 0:
-            return  # return silently if path or odom is not received.
+        if self.is_stopped_ or not self.received_odom_ or not self.received_path_ or len(self.path_poses_) == 0:
+            return  # return silently if stopped or path or odom is not received.
 
         # get lookahead point
         lookahead_x, lookahead_y = self.getLookaheadPoint_()

@@ -26,6 +26,8 @@ ros2 launch ee3305_bringup run.launch.py cpp:=False headless:=False libgl:=False
 > * `libgl:=False`: Uses native GPU acceleration (recommended for WSL2 and dual-boot). Set to `libgl:=True` if running on VirtualBox.
 
 ### 3. How to Command the Robot
+* **Web Mission Control Dashboard**:
+  Open your web browser at **`http://localhost:8080`** for an interactive dark-mode floorplan with one-click room dispatch buttons, live robot tracking, and patrol controls.
 * **Manual RViz Navigation**:
   Click the **2D Goal Pose** tool in the RViz2 top toolbar, then click and drag in any room.
 * **Dispatch to a Specific Room (Rooms 1 to 6)**:
@@ -393,3 +395,48 @@ To efficiently extract the cheapest node in $O(\log N)$ time, Python's `heapq` (
 * **Room 4 (Top-Right / Large Bedroom)**: $(x = 6.80, y = 3.20)$
 * **Room 5 (Bottom-Right)**: $(x = 7.80, y = -1.50)$
 * **Room 6 (Bottom-Left)**: $(x = -4.30, y = -1.00)$
+
+---
+
+### 6.2 Web-Based Mission Control Dashboard (`http://localhost:8080`)
+
+![ME3243 Part 2 Project TurtleBot3 Burger Control UI](assets/web_mission_control_ui.png)
+
+#### Files Added:
+* **`web_gui.py`**:
+  * **Purpose**: Dedicated ROS 2 node that integrates a lightweight, multi-threaded HTTP server on port 8080. Bridges browser clients with the ROS 2 computation graph without external web dependencies.
+  * Subscribes to `/odom`, `/path`, `/goal_pose`, `/room_goal`, `/patrol`, and `/map`.
+  * Ingests the latched `/map` topic (`nav_msgs/OccupancyGrid`) from `map_loader` and dynamically converts it in-memory (`io.BytesIO`) into tactical dark-mode floorplan imagery streamed directly over HTTP (zero image files saved to disk).
+  * Exposes REST API endpoints (`/api/status`, `/api/send_room`, `/api/send_goal`, `/api/patrol`, `/api/stop`, `/api/mode`) and publishes `/control_mode` (`std_msgs/String`) to communicate mode switches (`"manual"` vs `"voice"`) to external voice nodes.
+* **`index.html`**:
+  * **Purpose**: Single-page frontend user interface (**ME3243 Part 2 Project TurtleBot3 Burger control UI**). Built using HTML5 Canvas, Vanilla CSS, and modern JavaScript.
+  * Real-time floorplan rendering with dynamic coordinate alignment, live robot pose $(x, y, \text{yaw})$, target crosshairs, and Dijkstra planned path lines.
+  * One-click dispatch buttons for Rooms 1 through 6 and continuous automated multi-room patrol toggle.
+  * Mode Switcher (`MANUAL` vs `VOICE`): In Voice mode, manual room buttons are hidden, and map canvas clicks / numeric hotkeys are locked out to prevent accidental interference.
+  * Live telemetry ledger reporting `TURTLEBOT3 POSE:`, `TASK STATE:` (`single_goal` vs `multi_goal`), distance to goal, estimated time of arrival (ETA), 12-hour mission clock, and timestamped event log.
+
+#### Files Modified:
+* **`behavior.py`**:
+  * Added `pub_goal_pose_` (`geometry_msgs/PoseStamped`) to broadcast dispatched room and patrol targets to RViz2 and the Web GUI.
+  * Added `pub_cmd_vel_` (`geometry_msgs/TwistStamped`) to publish immediate zero velocities upon mission halt or patrol cancellation.
+  * Resolved loopback freeze by eliminating redundant recursive publishing on `/stop`.
+  * Triggers immediate replanning (`callbackTimerPlan_()`) upon goal dispatch for instant responsiveness.
+* **`controller.py`**:
+  * Added subscriber to `/stop` (`std_msgs/Bool`) and handled empty path inputs to halt wheel motor velocities immediately upon Emergency Stop.
+  * Added resume capability (`is_stopped_ = False` reset upon receiving a valid path) so the robot can immediately resume navigation after an Emergency Stop when a new waypoint is assigned.
+* **`planner.py`**:
+  * Added empty path broadcast upon receiving an empty path request, clearing path visualizations in RViz2 and Web GUI instantly when halted.
+
+#### Launch Integration (`run.launch.py`):
+The Web Mission Control GUI is integrated directly into the main launch file:
+* Added the `gui` launch argument to `run.launch.py`, defaulted to `True`.
+* Running the standard launch command now automatically launches the simulation, robot state, navigation nodes, and the web GUI server together:
+  ```bash
+  ros2 launch ee3305_bringup run.launch.py cpp:=False headless:=False libgl:=False
+  ```
+* Open your browser and navigate to:
+  ```
+  http://localhost:8080
+  ```
+  *(To run without the Web GUI, simply append `gui:=False` to the launch command).*
+

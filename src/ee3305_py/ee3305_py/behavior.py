@@ -3,7 +3,7 @@ from math import hypot
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy, qos_profile_sensor_data, qos_profile_services_default
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Int32, String, Bool
 from visualization_msgs.msg import Marker, MarkerArray
@@ -49,6 +49,11 @@ class Behavior(Node):
             Bool, "patrol", self.callbackSubPatrol_, 10
         )
 
+        # Stop / Emergency Stop subscriber
+        self.sub_stop_ = self.create_subscription(
+            Bool, "stop", self.callbackSubStop_, 10
+        )
+
         # Odometry subscriber
         self.sub_odom_ = self.create_subscription(
             Odometry, "odom", self.callbackSubOdom_, 10
@@ -58,6 +63,16 @@ class Behavior(Node):
         # Path request publisher
         self.pub_path_request_ = self.create_publisher(
             Path, "path_request", 10
+        )
+
+        # Command velocity publisher (for emergency halts)
+        self.pub_cmd_vel_ = self.create_publisher(
+            TwistStamped, "cmd_vel", 10
+        )
+
+        # Goal pose publisher (broadcasts dispatched room target to RViz2 and Web GUI)
+        self.pub_goal_pose_ = self.create_publisher(
+            PoseStamped, "goal_pose", 10
         )
 
         # Room markers publisher (visual 3D labels for RViz2)
@@ -104,6 +119,7 @@ class Behavior(Node):
         self.get_logger().info(
             f"Received New Goal @ ({self.goal_x_:7.3f}, {self.goal_y_:7.3f})."
         )
+        self.callbackTimerPlan_()
 
     # Room goal subscriber callback (e.g., ros2 topic pub /room_goal std_msgs/Int32 "{data: 3}")
     def callbackSubRoomGoal_(self, msg: Int32):
@@ -126,7 +142,34 @@ class Behavior(Node):
             self.get_logger().info(f"Patrol Mode ACTIVATED! Visiting sequence: {self.patrol_sequence_}")
             self.setRoomGoal_(first_room)
         else:
-            self.get_logger().info("Patrol Mode DEACTIVATED.")
+            self.get_logger().info("Patrol Mode DEACTIVATED — halting robot immediately.")
+            self.stopNavigation_()
+
+    # Stop subscriber callback
+    def callbackSubStop_(self, msg: Bool):
+        if msg.data:
+            self.get_logger().warn("Emergency / Mission STOP signal received — halting robot.")
+            self.stopNavigation_()
+
+    # Cancels active navigation and halts robot
+    def stopNavigation_(self):
+        self.received_goal_coords_ = False
+        self.goal_reached_ = True
+        self.current_room_id_ = None
+        self.patrol_active_ = False
+
+        # Request planner to clear path
+        empty_req = Path()
+        empty_req.header.stamp = self.get_clock().now().to_msg()
+        empty_req.header.frame_id = "map"
+        self.pub_path_request_.publish(empty_req)
+
+        # Publish zero velocity command
+        cmd = TwistStamped()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.twist.linear.x = 0.0
+        cmd.twist.angular.z = 0.0
+        self.pub_cmd_vel_.publish(cmd)
 
     # Sets destination to a specific numbered room
     def setRoomGoal_(self, room_id: int):
@@ -137,9 +180,19 @@ class Behavior(Node):
         self.received_goal_coords_ = True
         self.goal_reached_ = False
 
+        # Broadcast goal pose to RViz2 and Web GUI
+        goal_msg = PoseStamped()
+        goal_msg.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.header.frame_id = "map"
+        goal_msg.pose.position.x = self.goal_x_
+        goal_msg.pose.position.y = self.goal_y_
+        goal_msg.pose.orientation.w = 1.0
+        self.pub_goal_pose_.publish(goal_msg)
+
         self.get_logger().info(
             f"--> DISPATCHED MISSION: Moving to {room['name']} @ ({self.goal_x_:7.3f}, {self.goal_y_:7.3f})"
         )
+        self.callbackTimerPlan_()
 
     # Odometry subscriber callback.
     def callbackSubOdom_(self, msg: Odometry):

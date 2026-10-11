@@ -70,5 +70,11 @@
       </include>
     </model>
 
+    <include>
+      <name>burger</name>
+      <uri>model://turtlebot3_burger</uri>
+      <pose>-2.0 -0.5 0.01 0 0 0</pose>
+    </include>
+
   </world>
 </sdf>

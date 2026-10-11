@@ -87,6 +87,15 @@ class Planner(Node):
 
     # Path request subscriber callback
     def callbackSubPathRequest_(self, msg: Path):
+        if len(msg.poses) == 0:
+            # Clear current path
+            empty_path = Path()
+            empty_path.header.stamp = self.get_clock().now().to_msg()
+            empty_path.header.frame_id = "map"
+            self.pub_path_.publish(empty_path)
+            self.has_new_request_ = False
+            return
+
         if len(msg.poses) < 2:
             return
 

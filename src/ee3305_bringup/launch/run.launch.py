@@ -79,6 +79,14 @@ def generate_launch_description():
     )
     ld.add_action(arg_libgl)
 
+    # Launch Arg: gui (Web Mission Control)
+    arg_gui = DeclareLaunchArgument(
+        "gui",
+        default_value="True",
+        description="If set to True, runs the Web Mission Control GUI on http://localhost:8080",
+    )
+    ld.add_action(arg_gui)
+
     # ======= 3. LAUNCH FILES ===========
     # start the gz world, ground truth positioning, and map publishers.
     launch_sim_truth = IncludeLaunchDescription(
@@ -170,5 +178,16 @@ def generate_launch_description():
         parameters=[nodes_param_file],
     )
     ld.add_action(node_behavior)
+
+    # Run Web Mission Control GUI Node
+    if_cond_gui = IfCondition(EqualsSubstitution(LaunchConfiguration("gui"), "True"))
+    node_web_gui = Node(
+        condition=if_cond_gui,
+        package="ee3305_py",
+        executable="web_gui",
+        output="screen",
+        emulate_tty="True",
+    )
+    ld.add_action(node_web_gui)
 
     return ld

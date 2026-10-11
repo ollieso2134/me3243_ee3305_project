@@ -6,6 +6,7 @@ setup(
     name=package_name,
     version='0.0.0',
     packages=find_packages(exclude=['test']),
+    package_data={'ee3305_py': ['static/*']},
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -23,6 +24,7 @@ setup(
             'behavior = ee3305_py.behavior:main',
             'planner = ee3305_py.planner:main',
             'controller = ee3305_py.controller:main',
+            'web_gui = ee3305_py.web_gui:main',
         ],
     },
 )

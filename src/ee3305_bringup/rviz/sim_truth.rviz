@@ -284,7 +284,7 @@ Visualization Manager:
       Enabled: true
       Name: RoomMarkers
       Namespaces:
-        {}: true
+        "": true
       Topic:
         Depth: 5
         Durability Policy: Volatile
