@@ -2,6 +2,10 @@ import io
 import os
 import json
 import threading
+import tempfile
+import time
+from collections import deque
+from urllib.parse import urlsplit, parse_qs
 from math import atan2
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -76,6 +80,17 @@ class WebGUINode(Node):
             OccupancyGrid, "map", self.callbackMap_, qos_map
         )
 
+        # AI chat bridge state: ROS messages never block the HTTP server.
+        self.ai_lock_ = threading.RLock()
+        self.ai_events_ = deque(maxlen=200)
+        self.ai_next_event_id_ = 0
+        self.ai_ready_ = False
+        self.sub_ai_event_ = self.create_subscription(String, "ai_chat_event", self.callbackAIEvent_, 10)
+        self.sub_ai_ready_ = self.create_subscription(Bool, "ai_ready", self.callbackAIReady_, 10)
+        self.pub_ai_text_ = self.create_publisher(String, "ai_text_command", 10)
+        self.pub_ai_audio_ = self.create_publisher(String, "ai_audio_path", 10)
+        self.pub_ai_stop_ = self.create_publisher(Bool, "ai_stop", 10)
+
         # Publishers
         self.pub_goal_pose_ = self.create_publisher(PoseStamped, "goal_pose", 10)
         self.pub_room_goal_ = self.create_publisher(Int32, "room_goal", 10)
@@ -86,6 +101,46 @@ class WebGUINode(Node):
         self.pub_control_mode_ = self.create_publisher(String, "control_mode", 10)
 
         self.get_logger().info("Web GUI ROS 2 Node initialized with /map subscription.")
+
+    def callbackAIReady_(self, msg):
+        with self.ai_lock_:
+            self.ai_ready_ = bool(msg.data)
+            self.ai_ready_seen_ = time.monotonic()
+
+    def callbackAIEvent_(self, msg):
+        try:
+            event = json.loads(msg.data)
+            role = str(event.get("role", "system"))
+            content = str(event.get("text", ""))[:2000]
+        except (ValueError, TypeError):
+            return
+        if role not in ("user", "robot", "system") or not content:
+            return
+        with self.ai_lock_:
+            self.ai_next_event_id_ += 1
+            self.ai_events_.append({"id": self.ai_next_event_id_, "role": role, "text": content})
+
+    def aiEvents_(self, after):
+        with self.ai_lock_:
+            ready = self.ai_ready_ and time.monotonic() - getattr(self, "ai_ready_seen_", 0) < 4.0
+            return {"ready": ready, "events": [e for e in self.ai_events_ if e["id"] > after]}
+
+    def sendAIText_(self, text):
+        msg = String(); msg.data = text
+        self.pub_ai_text_.publish(msg)
+
+    def sendAIAudio_(self, raw, suffix):
+        # Browser audio is stored in a per-request temporary file on the ROS host.
+        fd, filename = tempfile.mkstemp(prefix="me3243_ai_", suffix=suffix)
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                f.write(raw)
+            msg = String(); msg.data = filename
+            self.pub_ai_audio_.publish(msg)
+        except Exception:
+            try: os.unlink(filename)
+            except OSError: pass
+            raise
 
     def callbackOdom_(self, msg: Odometry):
         self.rbt_x_ = msg.pose.pose.position.x
@@ -249,6 +304,8 @@ class WebGUINode(Node):
         msg.twist.angular.z = 0.0
         self.pub_cmd_vel_.publish(msg)
 
+        ai_msg = Bool(); ai_msg.data = True
+        self.pub_ai_stop_.publish(ai_msg)
         self.get_logger().warn("EMERGENCY STOP Triggered via Web GUI: robot halted, path cleared.")
 
     def setControlMode(self, mode: str):
@@ -320,7 +377,17 @@ class WebHandler(BaseHTTPRequestHandler):
                 self.wfile.write(global_node.map_png_bytes_)
             else:
                 self.send_error(404, "Map not ready yet")
-        elif self.path == "/api/status":
+        elif clean_path == "/api/ai/events":
+            if not global_node:
+                self.send_error(503, "Node not ready"); return
+            try:
+                after = max(0, int(parse_qs(urlsplit(self.path).query).get("after", [0])[0]))
+            except (ValueError, TypeError):
+                after = 0
+            payload = global_node.aiEvents_(after)
+            self._set_headers("application/json")
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+        elif clean_path == "/api/status":
             if global_node:
                 data = global_node.getStatusDict()
                 self._set_headers("application/json")
@@ -332,14 +399,40 @@ class WebHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         global global_node
-        content_len = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
+        try:
+            content_len = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self.send_error(400, "Invalid Content-Length"); return
+        if content_len > 8 * 1024 * 1024:
+            self.send_error(413, "Request too large (8 MB maximum)"); return
+        if self.path == "/api/ai/audio":
+            if not global_node or global_node.control_mode_ != "voice":
+                self.send_error(409, "AI voice mode is not active"); return
+            if not 128 <= content_len <= 8 * 1024 * 1024:
+                self.send_error(400, "Invalid audio size"); return
+            kind = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            suffix = {"audio/webm":".webm", "audio/ogg":".ogg", "audio/wav":".wav", "audio/mp4":".m4a"}.get(kind)
+            if not suffix:
+                self.send_error(415, "Unsupported audio format"); return
+            raw = self.rfile.read(content_len)
+            global_node.sendAIAudio_(raw, suffix)
+            self._set_headers(); self.wfile.write(b'{"status":"queued"}')
+            return
+        body = self.rfile.read(content_len).decode("utf-8", errors="replace") if content_len > 0 else "{}"
         try:
             req_data = json.loads(body) if body else {}
         except json.JSONDecodeError:
             req_data = {}
 
-        if self.path == "/api/send_room":
+        if self.path == "/api/ai/text":
+            value = req_data.get("text", "")
+            if not isinstance(value, str) or not value.strip() or len(value) > 1000:
+                self.send_error(400, "Invalid text"); return
+            if not global_node or global_node.control_mode_ != "voice":
+                self.send_error(409, "AI voice mode is not active"); return
+            global_node.sendAIText_(value.strip())
+            self._set_headers(); self.wfile.write(b'{"status":"queued"}')
+        elif self.path == "/api/send_room":
             room_id = int(req_data.get("room", 1))
             if global_node:
                 global_node.sendRoomGoal(room_id)
@@ -369,6 +462,8 @@ class WebHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/api/mode":
             mode = str(req_data.get("mode", "manual"))
+            if mode not in ("manual", "voice"):
+                self.send_error(400, "Invalid mode"); return
             if global_node:
                 global_node.setControlMode(mode)
             self._set_headers("application/json")

@@ -393,6 +393,44 @@
             color: var(--red);
             font-weight: 700;
         }
+
+/* AI VOICE ASSISTANT — sidebar voice-first layout */
+.ai-panel{margin-top:8px;border:1px solid #276b39;background:#080e0a;padding:9px;display:flex;flex-direction:column;gap:10px}
+.ai-head,.ai-chat-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ai-head{font-weight:700;color:var(--green);font-size:11px}.ai-state{font-size:9px;color:#aaa}
+.ai-chat-head{font-size:10px;color:#6eee90}.ai-chat-head span:last-child{color:#777;font-size:9px}
+.ai-chat-log{height:225px;overflow-y:auto;background:#101510;border:1px solid #29402e;padding:9px;display:flex;flex-direction:column;gap:9px;user-select:text}
+.ai-bubble{max-width:92%;border:1px solid #444;background:#222;padding:8px;border-radius:6px;overflow-wrap:anywhere;line-height:1.5}.ai-bubble.user{align-self:flex-end;background:#173a25;border-color:#376e42}.ai-bubble.robot{align-self:flex-start}.ai-bubble.system{align-self:center;color:#a6aca8;border-color:#29352d;font-size:10px}.ai-bubble .sender{font-size:9px;color:#74ee92;margin-bottom:4px}
+.ai-voice-area{border-top:1px solid #29402e;padding:13px 6px 8px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.ai-mic{width:83px;height:83px;border-radius:50%;background:#12321e;border:2px solid #5fff80;color:#78ffa0;font-size:34px;cursor:pointer}.ai-mic.recording{background:#45191b;border-color:#ff6060;box-shadow:0 0 15px #c33a3a80;color:#ff8c8c}.ai-mic:disabled{opacity:.4;cursor:not-allowed}
+.ai-voice-status{font-size:11px;color:#7fff9c;font-weight:700}.ai-voice-hint{font-size:9px;text-align:center;color:#888}
+.ai-input-row{display:flex;gap:5px}.ai-input-row input{flex:1;min-width:0;background:#111c14;border:1px solid #34503b;color:white;font:inherit;padding:8px;user-select:text}.ai-input-row button{background:#102114;border:1px solid #337b48;color:#74ff9a;padding:6px;font:inherit;cursor:pointer}.ai-input-row .ai-stop{border-color:#b74242;color:#ff6868}
+
+
+/* Compact voice mode: keep telemetry reachable on laptop-height displays. */
+.sidebar-hud {
+    min-height: 0;
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #347345 #070b08;
+}
+.hud-panel-magenta, .hud-panel-green, .action-btns-row, .hud-log-panel {
+    flex-shrink: 0;
+}
+.ai-panel { margin-top: 5px; padding: 6px; gap: 5px; }
+.ai-chat-log { height: clamp(105px, 16vh, 155px); padding: 6px; gap: 6px; }
+.ai-bubble { padding: 6px 7px; line-height: 1.35; }
+.ai-voice-area { padding: 7px 4px 3px; gap: 4px; }
+.ai-mic { width: 58px; height: 58px; font-size: 25px; }
+.ai-voice-status { font-size: 10px; }
+.ai-voice-hint { font-size: 9px; }
+.ai-input-row input { padding: 6px; }
+.ai-input-row button { padding: 5px; }
+.hud-log-panel { flex: 0 0 auto; min-height: 105px; }
+.hud-log-body { max-height: 110px; }
+
     </style>
 </head>
 <body>
@@ -439,7 +477,7 @@
                             [ 🕹️ MANUAL ]
                         </button>
                         <button class="mode-toggle-btn" id="btnVoice" onclick="setControlMode('voice')">
-                            [ 🎙️ VOICE CONTROL ]
+                            [ 🎙️ AI VOICE CONTROL ]
                         </button>
                     </div>
 
@@ -472,10 +510,23 @@
                         </div>
                     </div>
 
-                    <!-- Voice Notice Area (Shown when in Voice Control mode) -->
-                    <div id="voiceNoticeArea" style="display: none; border-top: 1px solid var(--border-dark); margin-top: 6px; padding: 12px 4px; text-align: center;">
-                        <span style="color: var(--green); font-weight: 700; font-size: 11px;">[VOICE CONTROL ACTIVE]</span><br>
-                        <span style="color: var(--gray); font-size: 10px;">Awaiting voice commands from external program.</span>
+                    <!-- AI PANEL: visible only in voice mode -->
+                    <div id="voiceNoticeArea" class="ai-panel" style="display:none">
+                        <div class="ai-head"><span>[ AI VOICE ASSISTANT ]</span><span class="ai-state" id="aiBackendState">CONNECTING</span></div>
+                        <div class="ai-chat-head"><span>CONVERSATION LOG</span><span>WHISPER + GEMINI</span></div>
+                        <div id="aiChatLog" class="ai-chat-log" role="log" aria-live="polite">
+                            <div class="ai-bubble system">AI assistant connecting...</div>
+                        </div>
+                        <div class="ai-voice-area">
+                            <button type="button" id="aiMicButton" class="ai-mic" onclick="toggleAiMic()" disabled aria-label="Start or stop voice recording">🎙</button>
+                            <span class="ai-voice-status" id="aiMicStatus">CONNECTING...</span>
+                            <span class="ai-voice-hint">Tap once to speak • Auto-submit after silence</span>
+                        </div>
+                        <div class="ai-input-row">
+                            <input id="aiTextInput" type="text" autocomplete="off" placeholder="Optional: type command..." aria-label="AI chat message" disabled>
+                            <button type="button" id="aiSendButton" onclick="sendAiText()" disabled>SEND</button>
+                            <button type="button" class="ai-stop" onclick="aiStop()">STOP</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -917,10 +968,11 @@
             if (mode === 'voice') {
                 btnM.classList.remove('active-manual');
                 btnV.classList.add('active-voice');
-                hudMode.textContent = 'VOICE';
+                hudMode.textContent = 'AI VOICE';
                 hudMode.className = 'h-val green';
                 if (manualArea) manualArea.style.display = 'none';
-                if (voiceArea) voiceArea.style.display = 'block';
+                if (voiceArea) voiceArea.style.display = 'flex';
+                if (typeof aiControls === 'function') aiControls();
             } else {
                 btnV.classList.remove('active-voice');
                 btnM.classList.add('active-manual');
@@ -928,6 +980,8 @@
                 hudMode.className = 'h-val cyan';
                 if (manualArea) manualArea.style.display = 'block';
                 if (voiceArea) voiceArea.style.display = 'none';
+                if (typeof aiRecording !== 'undefined' && aiRecording) stopAiRecorder(false);
+                if (typeof aiControls === 'function') aiControls();
             }
         }
 
@@ -1029,7 +1083,7 @@
            KEYBOARD SHORTCUTS
         ============================================================ */
         document.addEventListener('keydown', (e) => {
-            if (e.target.tagName === 'INPUT') return;
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
             if (e.key === 'p' || e.key === 'P') togglePatrol();
             if (e.key === 'c' || e.key === 'C' || e.code === 'Space') {
                 e.preventDefault();
@@ -1044,6 +1098,190 @@
                 sendRoom(parseInt(e.key));
             }
         });
+
+
+        /* AI assistant: browser recording and server events */
+        let aiLastEventId = 0;
+        let aiRecorder = null;
+        let aiStream = null;
+        let aiAudioChunks = [];
+        let aiRecording = false;
+        let aiBusy = false;
+        let aiOnline = false;
+        let aiAudioContext = null;
+        let aiAudioSource = null;
+        let aiAudioAnalyser = null;
+        let aiSilenceFrame = null;
+        let aiSpeechStarted = false;
+        let aiLastSpeechTime = 0;
+        let aiNoiseFloor = 0.008;
+        let aiListenStartedAt = 0;
+        const aiMic = document.getElementById('aiMicButton');
+        const aiInput = document.getElementById('aiTextInput');
+        const aiSend = document.getElementById('aiSendButton');
+        const aiMicStatus = document.getElementById('aiMicStatus');
+        aiInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); sendAiText(); }
+        });
+
+        function aiMessage(who, content) {
+            const box = document.getElementById('aiChatLog');
+            const bubble = document.createElement('div');
+            bubble.className = 'ai-bubble ' + (who === 'user' ? 'user' : who === 'robot' ? 'robot' : 'system');
+            const whoLabel = document.createElement('div'); whoLabel.className = 'sender';
+            whoLabel.textContent = who === 'user' ? 'YOU' : who === 'robot' ? 'ROBOT' : 'SYSTEM';
+            const message = document.createElement('div'); message.textContent = String(content);
+            bubble.append(whoLabel, message); box.appendChild(bubble);
+            while (box.children.length > 100) box.firstElementChild.remove();
+            box.scrollTop = box.scrollHeight;
+        }
+        function aiControls() {
+            const enabled = aiOnline && controlMode === 'voice';
+            aiMic.disabled = !enabled || aiBusy;
+            aiInput.disabled = !enabled;
+            aiSend.disabled = !enabled;
+            if (!aiRecording) aiMicStatus.textContent = !aiOnline ? 'AI BACKEND OFFLINE' : !enabled ? 'SELECT AI VOICE MODE' : aiBusy ? 'PROCESSING...' : 'TAP TO SPEAK';
+        }
+        async function fetchAiEvents() {
+            try {
+                const response = await fetch('/api/ai/events?after=' + aiLastEventId, {cache:'no-store'});
+                if (!response.ok) throw new Error('AI connection failed');
+                const data = await response.json();
+                aiOnline = !!data.ready;
+                document.getElementById('aiBackendState').textContent = aiOnline ? 'CONNECTED' : 'OFFLINE';
+                for (const ev of (data.events || [])) {
+                    aiLastEventId = Math.max(aiLastEventId, Number(ev.id));
+                    aiMessage(ev.role || 'system', ev.text || '');
+                }
+            } catch (_) {
+                aiOnline = false;
+                document.getElementById('aiBackendState').textContent = 'OFFLINE';
+            }
+            aiControls();
+        }
+        async function sendAiText() {
+            const text = aiInput.value.trim();
+            if (!text || !aiOnline || controlMode !== 'voice') return;
+            aiInput.value = '';
+            try {
+                const r = await fetch('/api/ai/text', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+                if (!r.ok) throw new Error(await r.text());
+            } catch (e) { aiMessage('system', 'Unable to send text: ' + e.message); }
+        }
+        async function aiStop() {
+            if (aiRecording) { stopAiRecorder(false); }
+            try {
+                const r = await fetch('/api/stop', {method:'POST'});
+                if (!r.ok) throw new Error('Stop request rejected');
+            } catch (e) { aiMessage('system','STOP FAILED: ' + e.message); }
+        }
+        function cleanupAiSilenceDetection() {
+            if (aiSilenceFrame !== null) {
+                cancelAnimationFrame(aiSilenceFrame);
+                aiSilenceFrame = null;
+            }
+            if (aiAudioSource) {
+                try { aiAudioSource.disconnect(); } catch (_) {}
+                aiAudioSource = null;
+            }
+            aiAudioAnalyser = null;
+            if (aiAudioContext) {
+                const ctx = aiAudioContext;
+                aiAudioContext = null;
+                ctx.close().catch(() => {});
+            }
+        }
+        function monitorAiSilence() {
+            if (!aiRecording || !aiAudioAnalyser) return;
+            const samples = new Float32Array(aiAudioAnalyser.fftSize);
+            aiAudioAnalyser.getFloatTimeDomainData(samples);
+            let sum = 0;
+            for (const value of samples) sum += value * value;
+            const level = Math.sqrt(sum / samples.length);
+            const now = performance.now();
+            const threshold = Math.max(0.012, aiNoiseFloor * 3.0);
+            // Calibrate the ambient noise before speech starts.
+            if (!aiSpeechStarted && now - aiListenStartedAt < 500) {
+                aiNoiseFloor = Math.max(0.002, aiNoiseFloor * 0.9 + level * 0.1);
+            }
+            if (level > threshold) {
+                aiSpeechStarted = true;
+                aiLastSpeechTime = now;
+                aiMicStatus.textContent = 'HEARING SPEECH...';
+            } else if (aiSpeechStarted && now - aiLastSpeechTime >= 1200) {
+                stopAiRecorder(true);
+                return;
+            } else if (!aiSpeechStarted) {
+                aiMicStatus.textContent = 'LISTENING — SPEAK NOW';
+            }
+            // Do not record indefinitely if the user never starts talking.
+            if (!aiSpeechStarted && now - aiListenStartedAt > 12000) {
+                stopAiRecorder(false);
+                aiMessage('system', 'No speech detected. Tap the microphone to try again.');
+                return;
+            }
+            aiSilenceFrame = requestAnimationFrame(monitorAiSilence);
+        }
+        async function toggleAiMic() {
+            if (aiRecording) { stopAiRecorder(true); return; }
+            if (!aiOnline || controlMode !== 'voice' || aiBusy) return;
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+                aiMessage('system','Browser microphone recording is unavailable. Use localhost or HTTPS and grant microphone permission.');
+                return;
+            }
+            try {
+                aiStream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation:true, noiseSuppression:true}});
+                aiAudioChunks = [];
+                const preferred = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus'];
+                const mime = preferred.find(x=>MediaRecorder.isTypeSupported(x));
+                aiRecorder = mime ? new MediaRecorder(aiStream,{mimeType:mime}) : new MediaRecorder(aiStream);
+                aiRecorder.ondataavailable = ev => { if (ev.data.size) aiAudioChunks.push(ev.data); };
+                aiRecorder.onstop = async () => {
+                    cleanupAiSilenceDetection();
+                    if (aiStream) { aiStream.getTracks().forEach(t=>t.stop()); aiStream=null; }
+                    const send = aiRecorder && aiRecorder._sendOnStop;
+                    aiRecorder = null;
+                    if (!send || aiAudioChunks.length === 0) {aiBusy=false; aiControls();return;}
+                    const blob = new Blob(aiAudioChunks,{type:mime || 'audio/webm'});
+                    try {
+                        const r = await fetch('/api/ai/audio', {method:'POST',headers:{'Content-Type':blob.type || 'application/octet-stream'},body:blob});
+                        if (!r.ok) throw new Error(await r.text());
+                    } catch(e) { aiMessage('system','Audio upload failed: '+e.message); }
+                    finally { aiBusy=false; aiControls(); }
+                };
+                aiRecorder.start(); aiRecording=true; aiMic.classList.add('recording');
+                aiSpeechStarted = false;
+                aiLastSpeechTime = 0;
+                aiListenStartedAt = performance.now();
+                aiNoiseFloor = 0.008;
+                aiMicStatus.textContent='LISTENING — SPEAK NOW';
+                const AudioContextType = window.AudioContext || window.webkitAudioContext;
+                if (AudioContextType) {
+                    try {
+                        aiAudioContext = new AudioContextType();
+                        await aiAudioContext.resume();
+                        aiAudioSource = aiAudioContext.createMediaStreamSource(aiStream);
+                        aiAudioAnalyser = aiAudioContext.createAnalyser();
+                        aiAudioAnalyser.fftSize = 2048;
+                        aiAudioSource.connect(aiAudioAnalyser);
+                        monitorAiSilence();
+                    } catch (audioError) {
+                        cleanupAiSilenceDetection();
+                        aiMessage('system', 'Auto-silence detection unavailable; tap again to send.');
+                    }
+                }
+                setTimeout(()=>{if(aiRecording) stopAiRecorder(true)}, 30000);
+            } catch (e) {aiMessage('system','Microphone access failed: '+e.message); aiControls();}
+        }
+        function stopAiRecorder(send) {
+            if (!aiRecording) return;
+            aiRecording=false; aiBusy=send; aiMic.classList.remove('recording');
+            cleanupAiSilenceDetection();
+            if(aiRecorder && aiRecorder.state !== 'inactive') {aiRecorder._sendOnStop=send;aiRecorder.stop();}
+            aiControls();
+        }
+        setInterval(fetchAiEvents, 700);
+        fetchAiEvents();
 
         /* ============================================================
            INITIALIZATION

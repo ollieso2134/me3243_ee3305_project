@@ -1,0 +1,10 @@
+# AI library versions observed in the working virtual environment.
+# Install ROS 2 Jazzy, Gazebo, and the original ROS project separately.
+google-genai==2.29.0
+faster-whisper==1.2.1
+edge-tts==7.2.8
+ctranslate2==4.8.2
+av==18.1.0
+numpy==1.26.4
+requests==2.31.0
+websockets==16.1.1

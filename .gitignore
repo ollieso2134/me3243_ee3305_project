@@ -3,3 +3,28 @@ build/
 install/
 log/
 backup/
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Python virtual environments
+.venv/
+venv/
+me3243_ai_env/
+
+# Windows metadata
+*:Zone.Identifier
+
+# Backup files
+*.backup
+*.bak
+
+# Environment variables and API secrets
+.env
+.env.*
+!.env.example
+
+# Python packaging artifacts
+*.egg-info/
+dist/
