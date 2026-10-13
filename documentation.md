@@ -442,10 +442,12 @@ The Web Mission Control GUI is integrated directly into the main launch file:
 
 ---
 
-### 6.3 Integrated AI Voice Control System (`me3243_voice_control`)
+## 7. Intelligent AI Voice Control System (ME3243 Extension)
 
-#### Overview & Architecture
-An end-to-end voice and natural language command extension integrated with the Web Mission Control interface and ROS 2 computation graph. Audio is captured directly via the user's browser using the Web Audio API / `MediaRecorder` and forwarded over HTTP to `web_gui.py`, eliminating WSL2 audio passthrough complications entirely.
+![ME3243 AI Voice Assistant & Real-Time Autonomous Path Execution](assets/ai_voice_control_live.png)
+
+### 7.1 Overview & System Architecture
+An end-to-end voice and natural language command extension integrated seamlessly with the Web Mission Control interface and ROS 2 computation graph. Audio is captured directly via the user's browser using the Web Audio API / `MediaRecorder` and forwarded over HTTP to `web_gui.py`, eliminating WSL2 audio passthrough complications entirely.
 
 ```text
 Browser Microphone (Web GUI)
@@ -476,7 +478,26 @@ Faster-Whisper (STT)            |
    Shared Autonomous Navigation Pipeline (Behavior -> Planner -> Controller)
 ```
 
-#### Package Structure (`src/me3243_voice_control/`):
+### 7.2 Live Verification & Execution Walkthrough
+As verified in the live integration run shown above:
+1. **Mode Switch & Topic Handshake**:
+   - The user selects `[ 🎙️ AI VOICE CONTROL ]` in the Web GUI.
+   - The GUI publishes `/control_mode` as `"voice"`, locking out canvas misclicks and indicating `TOPIC SYNC: /control_mode -- PUBLISHED`.
+2. **Speech Capture & Transcription**:
+   - The operator taps the microphone and speaks: *"Go to room 3"*.
+   - Built-in silence detection auto-submits the audio buffer to `/api/ai/audio`.
+   - The **Faster-Whisper** engine transcribes the audio locally on CPU.
+3. **Intent Parsing & Reasoning**:
+   - The **Gemini LLM Parser** (`gemini-3.5-flash-lite`) interprets the intent and extracts the target: `{"action": "goto_room", "room": 3}`.
+   - Room 3 coordinates $(x = 3.20\,\text{m}, y = 3.20\,\text{m})$ are queried and pushed to the navigation queue.
+4. **Speech Synthesis & Conversation Ledger**:
+   - The synthesized TTS response *"Navigating to room 3."* is streamed back, logged in the GUI conversation ledger, and dispatched via Edge TTS.
+5. **Dijkstra Planning & Pure Pursuit Tracking**:
+   - The Behavior node issues a planning request to the Planner node.
+   - Dijkstra calculates an optimal, collision-free global path (cyan dotted line).
+   - Pure Pursuit controller tracks the curvature in real time, updating live telemetry (`TURTLEBOT3 POSE: X: +1.45 m | Y: -0.50 m`, `DISTANCE / ETA: 4.09 m (22.7 s)`).
+
+### 7.3 Package Structure (`src/me3243_voice_control/`)
 * **`ai_web_bridge.py`**: Intermediary bridge node connecting Web GUI HTTP calls with the ROS 2 voice pipeline.
 * **`voice_node.py`**: Main ROS 2 voice orchestrator coordinating speech recognition, reasoning, and navigation execution.
 * **`speech_to_text.py` & `whisper_worker.py`**: Offline speech-to-text processing using Faster-Whisper.
@@ -485,7 +506,7 @@ Faster-Whisper (STT)            |
 * **`waypoint_queue.py` & `navigation_manager.py`**: Sequence coordinator handling multi-waypoint dispatch, progress tracking, and goal arrival verification.
 * **`text_to_speech.py`**: Audio feedback synthesizer using Edge TTS with live feedback published to `ai_chat_event` and displayed in the Web GUI conversation ledger.
 
-#### ROS 2 Communication Interfaces:
+### 7.4 ROS 2 Communication Interfaces
 | Topic | Type | Role |
 |---|---|---|
 | `ai_text_command` | `std_msgs/String` | Typed command string from Web GUI |
@@ -496,31 +517,29 @@ Faster-Whisper (STT)            |
 | `/control_mode` | `std_msgs/String` | Toggles between `"manual"` and `"voice"` mode |
 | `/room_goal` | `std_msgs/Int32` | Dispatched room waypoint ID (1–6) |
 
-#### How to Run:
-1. **Install Python AI Dependencies**:
+### 7.5 How to Run
+1. **API Key Setup**:
+   Create a `.env` file in the workspace root (or export the variable in your shell):
    ```bash
-   pip install -r requirements_ai.txt
+   echo 'GEMINI_API_KEY="your_api_key_here"' > .env
    ```
-2. **Export Gemini API Key**:
+2. **Single-Command Full Stack Launch**:
    ```bash
-   export GEMINI_API_KEY="your_api_key_here"
+   ./start_all_with_ai.sh
    ```
-3. **Launch Simulation & AI Voice System**:
-   * Single-command full stack launcher:
-     ```bash
-     ./start_all_with_ai.sh
-     ```
-   * Or run simulation and voice bridge in separate terminals:
-     ```bash
-     # Terminal 1: Simulation & Web GUI
-     ros2 launch ee3305_bringup run.launch.py cpp:=False headless:=False libgl:=False
+   *(Launches Gazebo simulation, robot state publishers, Python navigation nodes, Web Mission Control GUI, and AI Voice Bridge together with automatic virtual environment and `.env` loading).*
+3. **Or Launch in Separate Terminals**:
+   ```bash
+   # Terminal 1: Simulation & Web GUI
+   ros2 launch ee3305_bringup run.launch.py cpp:=False headless:=False libgl:=False
 
-     # Terminal 2: AI Voice Bridge
-     ./start_ai_bridge.sh
-     ```
-4. **Accessing Voice Control**:
-   * Open `http://localhost:8080`.
-   * Click **`[ 🎙️ AI VOICE CONTROL ]`**.
-   * Tap the **Microphone Button (🎙)** to speak or type requests in the command bar.
+   # Terminal 2: AI Voice Bridge
+   ./start_ai_bridge.sh
+   ```
+4. **Operation**:
+   * Open `http://localhost:8080` in your web browser.
+   * Switch to **`[ 🎙️ AI VOICE CONTROL ]`**.
+   * Speak or type natural language instructions (e.g., *"Go to Room 3"*, *"Visit Room 1 then Room 4"*, *"Stop immediately"*).
+
 
 
