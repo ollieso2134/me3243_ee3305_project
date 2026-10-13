@@ -442,11 +442,11 @@ The Web Mission Control GUI is integrated directly into the main launch file:
 
 ---
 
-## 7. Intelligent AI Voice Control System (ME3243 Extension)
+### 6.3 Intelligent AI Voice Control System (`me3243_voice_control`)
 
 ![ME3243 AI Voice Assistant & Real-Time Autonomous Path Execution](assets/ai_voice_control_live.png)
 
-### 7.1 Overview & System Architecture
+#### 6.3.1 Overview & System Architecture
 An end-to-end voice and natural language command extension integrated seamlessly with the Web Mission Control interface and ROS 2 computation graph. Audio is captured directly via the user's browser using the Web Audio API / `MediaRecorder` and forwarded over HTTP to `web_gui.py`, eliminating WSL2 audio passthrough complications entirely.
 
 ```text
@@ -478,7 +478,7 @@ Faster-Whisper (STT)            |
    Shared Autonomous Navigation Pipeline (Behavior -> Planner -> Controller)
 ```
 
-### 7.2 Live Verification & Execution Walkthrough
+#### 6.3.2 Live Verification & Execution Walkthrough
 As verified in the live integration run shown above:
 1. **Mode Switch & Topic Handshake**:
    - The user selects `[ 🎙️ AI VOICE CONTROL ]` in the Web GUI.
@@ -497,7 +497,7 @@ As verified in the live integration run shown above:
    - Dijkstra calculates an optimal, collision-free global path (cyan dotted line).
    - Pure Pursuit controller tracks the curvature in real time, updating live telemetry (`TURTLEBOT3 POSE: X: +1.45 m | Y: -0.50 m`, `DISTANCE / ETA: 4.09 m (22.7 s)`).
 
-### 7.3 Package Structure (`src/me3243_voice_control/`)
+#### 6.3.3 Package Structure (`src/me3243_voice_control/`)
 * **`ai_web_bridge.py`**: Intermediary bridge node connecting Web GUI HTTP calls with the ROS 2 voice pipeline.
 * **`voice_node.py`**: Main ROS 2 voice orchestrator coordinating speech recognition, reasoning, and navigation execution.
 * **`speech_to_text.py` & `whisper_worker.py`**: Offline speech-to-text processing using Faster-Whisper.
@@ -506,7 +506,7 @@ As verified in the live integration run shown above:
 * **`waypoint_queue.py` & `navigation_manager.py`**: Sequence coordinator handling multi-waypoint dispatch, progress tracking, and goal arrival verification.
 * **`text_to_speech.py`**: Audio feedback synthesizer using Edge TTS with live feedback published to `ai_chat_event` and displayed in the Web GUI conversation ledger.
 
-### 7.4 ROS 2 Communication Interfaces
+#### 6.3.4 ROS 2 Communication Interfaces
 | Topic | Type | Role |
 |---|---|---|
 | `ai_text_command` | `std_msgs/String` | Typed command string from Web GUI |
@@ -517,7 +517,7 @@ As verified in the live integration run shown above:
 | `/control_mode` | `std_msgs/String` | Toggles between `"manual"` and `"voice"` mode |
 | `/room_goal` | `std_msgs/Int32` | Dispatched room waypoint ID (1–6) |
 
-### 7.5 How to Run
+#### 6.3.5 How to Run
 1. **API Key Setup**:
    Create a `.env` file in the workspace root (or export the variable in your shell):
    ```bash
@@ -537,9 +537,6 @@ As verified in the live integration run shown above:
    ./start_ai_bridge.sh
    ```
 4. **Operation**:
-   * Open `http://localhost:8080` in your web browser.
+    * Open `http://localhost:8080` in your web browser.
    * Switch to **`[ 🎙️ AI VOICE CONTROL ]`**.
    * Speak or type natural language instructions (e.g., *"Go to Room 3"*, *"Visit Room 1 then Room 4"*, *"Stop immediately"*).
-
-
-
