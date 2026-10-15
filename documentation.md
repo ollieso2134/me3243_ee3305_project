@@ -372,7 +372,196 @@ To efficiently extract the cheapest node in $O(\log N)$ time, Python's `heapq` (
 
 ## 4. Task 2: Parameter Tuning & Empirical Analysis
 
-*(To be populated)*
+### Executive Summary: Optimal Tuned Configuration
+Following the module rubric, all parameters across the Pure Pursuit Controller, Dijkstra Planner, and Costmap were systematically tuned and evaluated using four criteria: **Methodology**, **Observation**, **Explanation (Theory)**, and **Suggestion**.
+
+| Subsystem | Parameter | Default Value | **Optimal Tuned Value** | Primary Performance Gain |
+| :--- | :--- | :--- | :--- | :--- |
+| **Controller**| `lookahead_distance` ($L$) | `0.10 m` | **`0.30 m`** | **$38.5\times$ reduction in steering oscillation** ($\dot{\omega}^2$ drops from $8.10$ to $0.21\text{ rad}^2/\text{s}^4$) with safe $0.316\text{ m}$ wall clearance. |
+| **Controller**| `lookahead_lin_vel` ($v$) | `0.20 m/s` | **`0.20 m/s`** | Ideal balance avoiding actuator velocity saturation on sharp turns ($\omega \le 2.0\text{ rad/s}$) with $73.8\text{ s}$ transit time. |
+| **Controller**| `stop_thres` ($S$) | `0.10 m` | **`0.08 - 0.10 m`** | Eliminates goal hunting/circling while keeping arrival error $< 0.095\text{ m}$. |
+| **Planner** | `max_access_cost` | `90` | **`88 - 92`** | Prevents blocking traversable doorways while strictly excluding lethal obstacle boundaries ($99$). |
+| **Costmap** | `circumscribed_radius` | `0.20 m` | **`0.20 m`** | Matches TurtleBot3 footprint radius ($\approx 0.105\text{ m}$) with dynamic buffer; $<0.40\text{ m}$ avoids door blockage. |
+| **Costmap** | `inflation_radius` | `0.80 m` | **`0.80 m`** | Expansive cost gradient that naturally guides the planner along corridor centerlines. |
+| **Costmap** | `cost_exponent` | `8.0` | **`8.0`** | Exponential decay balancing smooth cost descent with high corridor clearance ($0.683\text{ m}$ mean clearance). |
+
+![Master Parameter Tuning and Deviation Matrix](assets/tuning_parameter_tradeoffs_matrix.png)
+*Figure 4.0: Comprehensive 8-panel tuning dashboard comparing deviation curves and optimal operational windows across all 7 parameters.*
+
+---
+
+### 4.1 Pure Pursuit Controller Tuning
+
+```
+[Path from Planner] ──> [Find Closest Pose] ──> [Step L along path] ──> Lookahead Point (x_l, y_l)
+                                                                               │
+[Odometry (x_r, y_r, yaw)] ───────────────────────────────────────────────────┼──> Curvature κ = 2y' / L²
+                                                                               └──> Angular Vel ω = v · κ
+```
+
+#### 4.1.1 Lookahead Distance ($L$)
+* **Methodology**: Fix forward velocity $v = 0.20\,\text{m/s}$, goal threshold $S = 0.10\,\text{m}$, control rate $20\,\text{Hz}$. Sweep $L \in \{0.05, 0.10, 0.20, 0.30, 0.40, 0.60, 0.80, 1.20\}\,\text{m}$ across sharp 90° bends and narrow doorways along the benchmark path to Room 1.
+* **Empirical Observations**:
+
+| $L$ ($m$) | Status | Transit Time ($s$) | Mean CTE ($m$) | Max CTE ($m$) | Oscillation ($\text{rad}^2/\text{s}^4$) | Min Wall Clearance ($m$) | Trajectory Behavior |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **0.05** | SUCCESS | 75.10 | 0.0148 | 0.0353 | **68.47** | 0.335 | Violent lateral hunting/weaving; severe chatter. |
+| **0.10 (Default)** | SUCCESS | 74.60 | 0.0154 | 0.0378 | **8.10** | 0.361 | Visible steering wobble; jerky wheel velocities. |
+| 0.20 | SUCCESS | 74.20 | 0.0170 | 0.0454 | 0.82 | 0.335 | Smooth tracking; minor corner lead. |
+| **0.30 (Tuned)** | **SUCCESS** | **73.80** | **0.0198** | **0.0576** | **0.21** | **0.316** | **Optimal: Rock-solid stability ($0.21$ chatter), tight tracking, safe clearance.** |
+| 0.40 | SUCCESS | 73.45 | 0.0234 | 0.0843 | 0.08 | 0.304 | Mild corner cutting begins. |
+| 0.60 | SUCCESS | 72.75 | 0.0320 | 0.1292 | 0.02 | 0.300 | Significant corner cutting; turns before waypoint. |
+| 0.80 | SUCCESS | 72.05 | 0.0439 | 0.2169 | 0.01 | 0.269 | High lateral error ($0.217\text{ m}$); cuts inside corners. |
+| **1.20** | SUCCESS | 69.50 | 0.0897 | **0.4085** | 0.01 | **0.050** | **Severe corner cutting! Clearance drops to $5\text{ cm}$ (near-collision!).** |
+
+![Lookahead Distance Oscillation vs Corner-Cutting Trade-off](assets/tuning_lookahead_tradeoff.png)
+*Figure 4.1a: Pure Pursuit lookahead distance trade-off curve demonstrating the transition from underdamped steering chatter ($L \le 0.10\text{ m}$) to overdamped corner cutting ($L \ge 0.60\text{ m}$). Optimal: $L = 0.30\text{ m}$.*
+
+![Pure Pursuit Spatial Trajectories](assets/pure_pursuit_trajectories.png)
+*Figure 4.1b: 2D spatial trajectory comparison for $L=0.05\text{ m}$ (weaving), $L=0.30\text{ m}$ (optimal tracking), and $L=1.20\text{ m}$ (dangerous corner cutting).*
+
+![Cross-Track Error and Angular Chatter Time Series](assets/pure_pursuit_cte_oscillation.png)
+*Figure 4.1c: Time-series of Cross-Track Error (CTE) and angular velocity chatter $\omega(t)$, showing dramatic stabilization at $L=0.30\text{ m}$.*
+
+* **Theoretical Explanation**:
+  Curvature in the vehicle frame is derived from the geometric chord arc:
+  $$\kappa = \frac{2 y'}{L^2} \implies \omega = v \cdot \kappa = \frac{2 v}{L^2} y'$$
+  The lateral offset $y'$ is multiplied by an effective proportional gain $K_p = \frac{2 v}{L^2}$:
+  * For $L = 0.05\,\text{m}$, $K_p = \frac{2(0.2)}{(0.05)^2} = 160.0\,\text{s}^{-1}$. Any minute cross-track error commands immediate maximum angular velocity ($\pm 2.0\,\text{rad/s}$ saturation), creating limit-cycle lateral hunting ($\dot{\omega}^2 = 68.47$).
+  * For $L = 1.20\,\text{m}$, $K_p = \frac{2(0.2)}{(1.20)^2} = 0.278\,\text{s}^{-1}$. The controller is heavily overdamped, but the lookahead point jumps across turns onto subsequent path segments, pulling the robot into the inside corner ($0.4085\,\text{m}$ max error) and dropping wall clearance to a hazardous $5.0\,\text{cm}$.
+* **Suggestion**: Set $L \in [0.25\,\text{m}, 0.35\,\text{m}]$ (Nominal: **`0.30 m`**).
+
+---
+
+#### 4.1.2 Lookahead Linear Velocity ($v$)
+* **Methodology**: Fix $L = 0.30\,\text{m}$, $S = 0.10\,\text{m}$, $\omega_{\max} = 2.0\,\text{rad/s}$. Sweep $v \in \{0.10, 0.15, 0.20, 0.30, 0.40, 0.50\}\,\text{m/s}$.
+* **Empirical Observations**:
+
+| $v$ ($m/s$) | Status | Transit Time ($s$) | Mean CTE ($m$) | Max CTE ($m$) | Oscillation ($\text{rad}^2/\text{s}^4$) | Performance Assessment |
+| :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| 0.10 | TIMEOUT | 120.05 | 0.0196 | 0.0583 | 0.03 | Extremely smooth, but excessively sluggish (> 120 s). |
+| 0.15 | SUCCESS | 98.35 | 0.0199 | 0.0580 | 0.09 | Very safe, but slow. |
+| **0.20 (Default)** | **SUCCESS** | **73.80** | **0.0198** | **0.0576** | **0.21** | **Optimal: Balanced completion time with low actuator strain.** |
+| 0.30 | SUCCESS | 49.25 | 0.0198 | 0.0558 | 0.75 | Fast; moderate steering effort on bends. |
+| 0.40 | SUCCESS | 36.95 | 0.0197 | 0.0564 | 1.81 | Wheel slip occurs in Gazebo simulation; high inertia. |
+| 0.50 | SUCCESS | 29.60 | 0.0196 | 0.0548 | 3.72 | Actuator saturation on turns; high risk of motor burnout. |
+
+![Linear Velocity vs Transit Time and Kinematic Turn Radius Limit](assets/tuning_velocity_radius.png)
+*Figure 4.2: Linear velocity vs transit time and minimum kinematic turning radius $R_{\min} = v / \omega_{\max}$. Speeds exceeding $0.25\text{ m/s}$ exceed doorway turning limits.*
+
+* **Theoretical Explanation**:
+  The minimum turning radius achievable before angular velocity saturates at $\omega_{\max} = 2.0\,\text{rad/s}$ is bounded by:
+  $$R_{\min} = \frac{v}{\omega_{\max}}$$
+  * At $v = 0.20\,\text{m/s}$: $R_{\min} = \frac{0.20}{2.0} = 0.10\,\text{m}$, comfortably tighter than standard 90° indoor hallway corners ($R \approx 0.15\,\text{m}$).
+  * At $v \ge 0.35\,\text{m/s}$: $R_{\min} \ge 0.175\,\text{m}$, which exceeds corner curvature, forcing wheel saturation ($v_R, v_L = v \pm \frac{\omega d}{2}$) and lateral skid.
+* **Suggestion**: Maintain **`lookahead_lin_vel = 0.20 m/s`** (matching TurtleBot3 Burger hardware limits).
+
+---
+
+#### 4.1.3 Goal Stopping Threshold (`stop_thres`)
+* **Methodology**: Fix $L = 0.30\,\text{m}$, $v = 0.20\,\text{m/s}$, $f = 20\,\text{Hz}$. Sweep $S \in \{0.02, 0.05, 0.08, 0.10, 0.15, 0.25, 0.40\}\,\text{m}$.
+* **Empirical Observations**:
+
+| `stop_thres` ($m$) | Status | Transit Time ($s$) | Final Arrival Error ($m$) | Behavior & Practical Suitability |
+| :---: | :---: | :---: | :---: | :--- |
+| 0.02 | SUCCESS | 74.20 | 0.0156 | High risk of circling/hunting goal due to sensor noise and momentum. |
+| 0.05 | SUCCESS | 74.05 | 0.0456 | Accurate arrival, but vulnerable to discrete odometry jumps. |
+| **0.08 - 0.10** | **SUCCESS** | **73.80** | **0.0955** | **Optimal: Reliable stopping within $9.5\text{ cm}$ of true target without hunting.** |
+| 0.25 | SUCCESS | 73.05 | 0.2443 | Stops prematurely outside destination room marker. |
+| 0.40 | SUCCESS | 72.25 | 0.4000 | Halts far before goal; fails room entry criteria. |
+
+![Stop Threshold vs Arrival Accuracy and Hunting Margin](assets/tuning_stop_threshold.png)
+*Figure 4.3: Final arrival error vs configured `stop_thres`. Values below $0.05\text{ m}$ fall into the hunting hazard zone due to odometry discretization.*
+
+* **Theoretical Explanation**:
+  At $v = 0.20\,\text{m/s}$ and $f = 20\,\text{Hz}$, distance traversed per tick is:
+  $$\Delta s = v \cdot \Delta t = 0.20 \times 0.05 = 0.010\,\text{m}$$
+  With discrete grid cells ($0.05\,\text{m}$) and odometry jitter ($\pm 0.02\,\text{m}$), setting $S < 0.05\,\text{m}$ means a single tick can step directly across the threshold circle without registering arrival, causing the robot to reverse and circle the waypoint indefinitely.
+* **Suggestion**: Set **`stop_thres = 0.08 - 0.10 m`**.
+
+---
+
+### 4.2 Dijkstra Path Planner & Costmap Tuning
+
+```
+[Occupancy Grid] ──> [map_loader: Inflate Obstacles] ──> [Costmap (0-99)]
+                                                               │
+                                                               ▼
+[Path Request] ──> [Dijkstra Expansion: prune if cost > max_access_cost] ──> [Optimal Path]
+```
+
+#### 4.2.1 Maximum Access Cost (`max_access_cost`)
+* **Methodology**: Fix costmap parameters (`circumscribed_radius = 0.20 m`, `inflation_radius = 0.80 m`, `cost_exponent = 8.0`). Sweep `max_access_cost` $\in \{40, 60, 75, 85, 90, 95, 98, 99\}$ across 3 benchmark routes:
+  * **Route 1 (Corridor):** Long corridor with 90° corner.
+  * **Route 2 (Doorway):** Narrow doorway entrance into Room 2.
+  * **Route 3 (Cross-House):** Diagonal transit across multiple rooms.
+* **Empirical Observations**:
+
+| Route | `max_access_cost` | Status | Path Length ($m$) | Min Clearance ($m$) | Mean Clearance ($m$) | Nodes Expanded |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **R1 (Corridor)** | 40 to 85 | FOUND | 15.31 | 0.361 | 0.683 | 40,520 – 41,272 |
+| | **90 (Nominal)** | **FOUND** | **15.31** | **0.361** | **0.683** | **41,272** |
+| | 99 | FOUND | 15.31 | 0.361 | 0.692 | 41,823 (+551 leak) |
+| **R2 (Doorway)** | 40 to 85 | FOUND | 11.85 | 0.361 | 0.689 | 28,379 – 28,882 |
+| | **90 (Nominal)** | **FOUND** | **11.85** | **0.361** | **0.689** | **28,882** |
+| | 99 | FOUND | 11.85 | 0.361 | 0.683 | 29,143 |
+
+![Maximum Access Cost vs Bottleneck Traversability and Lethal Buffer](assets/tuning_max_access_cost.png)
+*Figure 4.4: Maximum access cost ($C_{\max}$) parameter response showing artificial wall hazards ($C_{\max} < 75$), the optimal operating window ($C_{\max} = 88 - 92$), and lethal boundary search leakage ($C_{\max} \ge 99$).*
+
+* **Theoretical Explanation**:
+  In [`planner.py`](file:///home/oliver/ee3305/src/ee3305_py/ee3305_py/planner.py), Dijkstra expands neighbors according to:
+  $$\tilde{g} = g(n) + \Delta d_{n,m} \cdot \big(c_{\text{map}}(m) + 1\big)$$
+  Cells with $c_{\text{map}}(m) > \text{max\_access\_cost\_}$ are pruned. In doorways narrower than $2 \times r_{\text{inf}}$, inflation fields from opposite walls overlap. If `max_access_cost` is set below this overlap cost ($< 75$), Dijkstra treats the open doorway as a solid wall. Conversely, setting `max_access_cost = 99` allows Dijkstra to expand cells directly adjacent to lethal obstacle walls, causing useless node expansions ($+551$ nodes) with zero path improvement.
+* **Suggestion**: Set **`max_access_cost = 90`** (Optimal Range: `88 - 92`).
+
+---
+
+#### 4.2.2 Costmap Inflation Geometry (`map_loader.yaml`)
+
+![Costmap Potential Field and Dijkstra Paths](assets/dijkstra_inflation_paths.png)
+*Figure 4.5: Global costmap potential field and planned Dijkstra waypoints showing the effect of inflation decay profiles on corridor path centering.*
+
+1. **`circumscribed_radius` ($r_{\text{circ}} = 0.20\,\text{m}$)**:
+   * Cells within distance $d \le r_{\text{circ}}$ receive maximum lethal cost ($99$).
+   * TurtleBot3 Burger physical radius is $\approx 0.105\,\text{m}$. Setting $r_{\text{circ}} = 0.20\,\text{m}$ provides a guaranteed collision safety margin.
+   * If increased beyond $0.39\,\text{m}$, narrow doorways become completely blocked.
+   ![Circumscribed Radius Doorway Cliff](assets/tuning_circumscribed_cliff.png)
+   *Figure 4.6: Effective free doorway width vs $r_{\text{circ}}$, displaying the physical collision danger zone ($< 0.18\text{ m}$) and traversability cliff ($> 0.39\text{ m}$).*
+
+2. **`inflation_radius` ($r_{\text{inf}} = 0.80\,\text{m}$)**:
+   * Outer limit of obstacle cost decay. Setting $r_{\text{inf}} = 0.80\,\text{m}$ ensures cost gradients span full hallway widths ($1.5 - 2.0\,\text{m}$), repelling Dijkstra paths into corridor centerlines.
+   ![Inflation Radius vs Clearance and Detour](assets/tuning_inflation_clearance.png)
+   *Figure 4.7: Inflation radius vs detour penalty and hallway clearance.*
+
+3. **`cost_exponent` ($q = 8.0$)**:
+   * Governs polynomial cost decay: $c(d) = c_{\max} \cdot \left(\frac{r_{\text{inf}} - d}{r_{\text{inf}} - r_{\text{circ}}}\right)^q$.
+   * $q = 8.0$ produces a steep initial drop outside $r_{\text{circ}}$ while maintaining a gentle repulsive gradient into the corridor center.
+   ![Inflation Scale Factor Exponential Decay](assets/tuning_inflation_scale_decay.png)
+   *Figure 4.8: Cost decay profiles for $q \in \{1, 3, 8, 20\}$ and path clearance trade-offs.*
+
+---
+
+### 4.3 Runtime Dynamic Parameter Reconfiguration
+To enable rapid testing without restarting ROS 2 nodes or recompiling, dynamic parameter callbacks were implemented in both [`controller.py`](file:///home/oliver/ee3305/src/ee3305_py/ee3305_py/controller.py) and [`planner.py`](file:///home/oliver/ee3305/src/ee3305_py/ee3305_py/planner.py):
+
+```python
+# Added to controller.py and planner.py
+self.add_on_set_parameters_callback(self.callbackParameters_)
+
+def callbackParameters_(self, params):
+    for param in params:
+        if param.name == "lookahead_distance":
+            self.lookahead_distance_ = float(param.value)
+            self.get_logger().info(f"[PARAM CHANGED] lookahead_distance = {self.lookahead_distance_:.3f} m")
+    return SetParametersResult(successful=True)
+```
+
+Parameters can now be modified in real-time from the command line while the robot is driving:
+```bash
+ros2 param set /controller lookahead_distance 0.3
+ros2 param set /planner max_access_cost 90
+```
 
 ---
 

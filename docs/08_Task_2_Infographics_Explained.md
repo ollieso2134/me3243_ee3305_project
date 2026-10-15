@@ -1,7 +1,7 @@
 # EE3305 Task 2: Comprehensive Visual Guide & Graph Explanations
 ***EE3305 / ME3243 Robotic System Design — National University of Singapore***
 
-This document provides an exhaustive, panel-by-panel technical breakdown of each graph picture generated for **Task 2 (Dijkstra Path Planner & Pure Pursuit Controller Tuning)**, with verified publication-grade assets maintained in [`docs/img/`](file:///home/shiny/ee3305/docs/img/).
+This document provides an exhaustive, panel-by-panel technical breakdown of each graph picture generated for **Task 2 (Dijkstra Path Planner & Pure Pursuit Controller Tuning)**, with verified publication-grade assets maintained in [`docs/img/`](img/).
 
 ---
 
@@ -22,10 +22,10 @@ This document provides an exhaustive, panel-by-panel technical breakdown of each
 
 # 1. Graph 0: Master Parameter Tuning Matrix (8-Panel Dashboard)
 
-![Master Parameter Tuning and Deviation Matrix](file:///home/shiny/ee3305/docs/img/tuning_parameter_tradeoffs_matrix.png)
+![Master Parameter Tuning and Deviation Matrix](img/tuning_parameter_tradeoffs_matrix.png)
 
 ### Summary & Layout Architecture
-- **File:** [`tuning_parameter_tradeoffs_matrix.png`](file:///home/shiny/ee3305/docs/img/tuning_parameter_tradeoffs_matrix.png)
+- **File:** [`tuning_parameter_tradeoffs_matrix.png`](img/tuning_parameter_tradeoffs_matrix.png)
 - **Dimensions:** $2 \times 4$ multi-panel composite grid ($24 \times 10.5\text{ inches}$, 250 DPI).
 - **Purpose:** Delivers a complete, unified side-by-side comparative dashboard containing all **7 critical tuning parameters** of the robot navigation stack alongside an **Executive Scorecard Table (Panel 8)**.
 
@@ -45,13 +45,13 @@ This document provides an exhaustive, panel-by-panel technical breakdown of each
 
 # 2. Graph 1: Lookahead Distance ($L$) — Stability vs Path Conformity
 
-![Lookahead Distance Oscillation vs Corner-Cutting Trade-off](file:///home/shiny/ee3305/docs/img/tuning_lookahead_tradeoff.png)
+![Lookahead Distance Oscillation vs Corner-Cutting Trade-off](img/tuning_lookahead_tradeoff.png)
 
 ### Subsystem & Location
-- **Subsystem:** Controller ([`controller.py`](file:///home/shiny/ee3305/src/ee3305_py/ee3305_py/controller.py))
-- **Parameter:** `lookahead_distance` in [`run.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/run.yaml#L9)
+- **Subsystem:** Controller ([`controller.py`](../src/ee3305_py/ee3305_py/controller.py))
+- **Parameter:** `lookahead_distance` in [`run.yaml`](../src/ee3305_bringup/params/run.yaml#L9)
 - **Tuned Value:** **`0.30 m`** (Nominal default: `0.10 m`)
-- **File:** [`tuning_lookahead_tradeoff.png`](file:///home/shiny/ee3305/docs/img/tuning_lookahead_tradeoff.png)
+- **File:** [`tuning_lookahead_tradeoff.png`](img/tuning_lookahead_tradeoff.png)
 
 ### Governing Physics & Control Theory
 Pure Pursuit calculates the commanded vehicle angular velocity $\omega$ from lookahead distance $L$ and heading error angle $\alpha$ to the goal point $(x_g, y_g)$ in the robot frame:
@@ -77,13 +77,13 @@ Because curvature gain is inversely proportional to $L$ ($\kappa \propto 1/L$), 
 
 # 3. Graph 2: Lookahead Linear Velocity ($v$) — Cornering Limit vs Speed
 
-![Linear Velocity vs Transit Time and Kinematic Turn Radius Limit](file:///home/shiny/ee3305/docs/img/tuning_velocity_radius.png)
+![Linear Velocity vs Transit Time and Kinematic Turn Radius Limit](img/tuning_velocity_radius.png)
 
 ### Subsystem & Location
-- **Subsystem:** Controller ([`controller.py`](file:///home/shiny/ee3305/src/ee3305_py/ee3305_py/controller.py))
-- **Parameter:** `lookahead_lin_vel` in [`run.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/run.yaml#L10)
+- **Subsystem:** Controller ([`controller.py`](../src/ee3305_py/ee3305_py/controller.py))
+- **Parameter:** `lookahead_lin_vel` in [`run.yaml`](../src/ee3305_bringup/params/run.yaml#L10)
 - **Tuned Value:** **`0.20 m/s`** (Physical limits: `max_lin_vel = 0.22 m/s`, `max_ang_vel = 2.0 rad/s`)
-- **File:** [`tuning_velocity_radius.png`](file:///home/shiny/ee3305/docs/img/tuning_velocity_radius.png)
+- **File:** [`tuning_velocity_radius.png`](img/tuning_velocity_radius.png)
 
 ### Governing Kinematic Constraint
 A differential-drive mobile robot with maximum angular velocity $\omega_{\max} = 2.0\text{ rad/s}$ is kinematically constrained by a minimum turning radius:
@@ -110,16 +110,16 @@ If the robot travels at speed $v$, it cannot execute any turn sharper than $R_{\
 
 # 4. Graph 3: Stopping Threshold ($S$) — Jitter Immunity vs Arrival Accuracy
 
-![Stop Threshold vs Arrival Accuracy and Hunting Margin](file:///home/shiny/ee3305/docs/img/tuning_stop_threshold.png)
+![Stop Threshold vs Arrival Accuracy and Hunting Margin](img/tuning_stop_threshold.png)
 
 ### Subsystem & Location
-- **Subsystem:** Controller ([`controller.py`](file:///home/shiny/ee3305/src/ee3305_py/ee3305_py/controller.py))
-- **Parameter:** `stop_thres` in [`run.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/run.yaml#L11)
+- **Subsystem:** Controller ([`controller.py`](../src/ee3305_py/ee3305_py/controller.py))
+- **Parameter:** `stop_thres` in [`run.yaml`](../src/ee3305_bringup/params/run.yaml#L11)
 - **Tuned Value:** **`0.10 m`** (`0.08 - 0.10 m`)
-- **File:** [`tuning_stop_threshold.png`](file:///home/shiny/ee3305/docs/img/tuning_stop_threshold.png)
+- **File:** [`tuning_stop_threshold.png`](img/tuning_stop_threshold.png)
 
 ### Governing Logic
-In [`controller.py`](file:///home/shiny/ee3305/src/ee3305_py/ee3305_py/controller.py), the robot terminates its trajectory when the Euclidean distance to the final goal point satisfies:
+In [`controller.py`](../src/ee3305_py/ee3305_py/controller.py), the robot terminates its trajectory when the Euclidean distance to the final goal point satisfies:
 $$\text{dist}(p_{\text{robot}}, p_{\text{goal}}) \le S$$
 
 ### Curve & Region Breakdown
@@ -138,13 +138,13 @@ $$\text{dist}(p_{\text{robot}}, p_{\text{goal}}) \le S$$
 
 # 5. Graph 4: Maximum Access Cost ($C_{\max}$) — Traversability vs Lethal Buffer
 
-![Maximum Access Cost vs Bottleneck Traversability and Lethal Buffer](file:///home/shiny/ee3305/docs/img/tuning_max_access_cost.png)
+![Maximum Access Cost vs Bottleneck Traversability and Lethal Buffer](img/tuning_max_access_cost.png)
 
 ### Subsystem & Location
-- **Subsystem:** Planner ([`planner.py`](file:///home/shiny/ee3305/src/ee3305_py/ee3305_py/planner.py))
-- **Parameter:** `max_access_cost` in [`run.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/run.yaml#L17)
+- **Subsystem:** Planner ([`planner.py`](../src/ee3305_py/ee3305_py/planner.py))
+- **Parameter:** `max_access_cost` in [`run.yaml`](../src/ee3305_bringup/params/run.yaml#L17)
 - **Tuned Value:** **`90`** (`88 - 92`)
-- **File:** [`tuning_max_access_cost.png`](file:///home/shiny/ee3305/docs/img/tuning_max_access_cost.png)
+- **File:** [`tuning_max_access_cost.png`](img/tuning_max_access_cost.png)
 
 ### Governing Algorithmic Logic
 Dijkstra's expansion prunes any neighbor grid cell $m$ if its costmap value exceeds the threshold:
@@ -169,13 +169,13 @@ $$\text{If } c_{\text{map}}(m) > C_{\max} \implies \text{Mark cell impassable (p
 
 # 6. Graph 5: Costmap Inflation Radius ($r_{\mathrm{inf}}$) — Centering vs Detour
 
-![Costmap Inflation Radius vs Clearance and Detour](file:///home/shiny/ee3305/docs/img/tuning_inflation_clearance.png)
+![Costmap Inflation Radius vs Clearance and Detour](img/tuning_inflation_clearance.png)
 
 ### Subsystem & Location
-- **Subsystem:** Costmap Loader ([`map_loader.cpp`](file:///home/shiny/ee3305/src/ee3305_map_loader/src/map_loader.cpp))
-- **Parameter:** `inflation_radius` in [`map_loader.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/map_loader.yaml#L9)
+- **Subsystem:** Costmap Loader ([`map_loader.cpp`](../src/ee3305_map_loader/src/map_loader.cpp))
+- **Parameter:** `inflation_radius` in [`map_loader.yaml`](../src/ee3305_bringup/params/map_loader.yaml#L9)
 - **Tuned Value:** **`0.80 m`** (`0.70 - 0.90 m`)
-- **File:** [`tuning_inflation_clearance.png`](file:///home/shiny/ee3305/docs/img/tuning_inflation_clearance.png)
+- **File:** [`tuning_inflation_clearance.png`](img/tuning_inflation_clearance.png)
 
 ### Governing Principle
 The inflation radius $r_{\mathrm{inf}}$ defines the outer boundary of the artificial potential field surrounding obstacles. For distances $d \in [r_{\mathrm{circ}}, r_{\mathrm{inf}}]$, an exponential cost penalty is applied to guide Dijkstra toward the corridor centerline.
@@ -196,13 +196,13 @@ The inflation radius $r_{\mathrm{inf}}$ defines the outer boundary of the artifi
 
 # 7. Graph 6: Inflation Scale Factor ($q$) — Gradient Decay & Detour
 
-![Inflation Scale Factor Exponential Decay and Detours](file:///home/shiny/ee3305/docs/img/tuning_inflation_scale_decay.png)
+![Inflation Scale Factor Exponential Decay and Detours](img/tuning_inflation_scale_decay.png)
 
 ### Subsystem & Location
-- **Subsystem:** Costmap Loader ([`map_loader.cpp`](file:///home/shiny/ee3305/src/ee3305_map_loader/src/map_loader.cpp))
-- **Parameter:** `cost_exponent` in [`map_loader.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/map_loader.yaml#L10)
+- **Subsystem:** Costmap Loader ([`map_loader.cpp`](../src/ee3305_map_loader/src/map_loader.cpp))
+- **Parameter:** `cost_exponent` in [`map_loader.yaml`](../src/ee3305_bringup/params/map_loader.yaml#L10)
 - **Tuned Value:** **`8.0`** (Tested range: `1.0 - 30.0`)
-- **File:** [`tuning_inflation_scale_decay.png`](file:///home/shiny/ee3305/docs/img/tuning_inflation_scale_decay.png)
+- **File:** [`tuning_inflation_scale_decay.png`](img/tuning_inflation_scale_decay.png)
 
 ### Governing Mathematical Model
 The inscribed non-lethal cost field decays exponentially with radial distance $d$:
@@ -224,13 +224,13 @@ $$C(d) = 99 \cdot \exp\left(-q \cdot \frac{d - r_{\mathrm{circ}}}{r_{\mathrm{inf
 
 # 8. Graph 7: Circumscribed Radius ($r_{\mathrm{circ}}$) — Chassis Safety vs Doorway Cliff
 
-![Circumscribed Radius Doorway Traversability Cliff](file:///home/shiny/ee3305/docs/img/tuning_circumscribed_cliff.png)
+![Circumscribed Radius Doorway Traversability Cliff](img/tuning_circumscribed_cliff.png)
 
 ### Subsystem & Location
-- **Subsystem:** Costmap Loader ([`map_loader.cpp`](file:///home/shiny/ee3305/src/ee3305_map_loader/src/map_loader.cpp))
-- **Parameter:** `circumscribed_radius` in [`map_loader.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/map_loader.yaml#L8)
+- **Subsystem:** Costmap Loader ([`map_loader.cpp`](../src/ee3305_map_loader/src/map_loader.cpp))
+- **Parameter:** `circumscribed_radius` in [`map_loader.yaml`](../src/ee3305_bringup/params/map_loader.yaml#L8)
 - **Tuned Value:** **`0.20 m`** (`0.18 - 0.22 m`)
-- **File:** [`tuning_circumscribed_cliff.png`](file:///home/shiny/ee3305/docs/img/tuning_circumscribed_cliff.png)
+- **File:** [`tuning_circumscribed_cliff.png`](img/tuning_circumscribed_cliff.png)
 
 ### Governing Physical Geometry
 The circumscribed radius $r_{\mathrm{circ}}$ sets the boundary of the lethal cost zone ($c=99$), representing the robot's physical collision footprint expanded into Configuration Space (C-Space).
@@ -253,10 +253,10 @@ $$w_{\mathrm{free}} = w_{\mathrm{door}} - 2 \cdot r_{\mathrm{circ}}$$
 
 # 9. Graph 8: Pure Pursuit Physical Trajectory Overlay
 
-![Pure Pursuit Spatial Trajectories](file:///home/shiny/ee3305/docs/img/pure_pursuit_trajectories.png)
+![Pure Pursuit Spatial Trajectories](img/pure_pursuit_trajectories.png)
 
 ### Summary & Purpose
-- **File:** [`pure_pursuit_trajectories.png`](file:///home/shiny/ee3305/docs/img/pure_pursuit_trajectories.png)
+- **File:** [`pure_pursuit_trajectories.png`](img/pure_pursuit_trajectories.png)
 - **Content:** 2D top-down simulation trajectory map showing the robot's physical driven path across the `turtlebot3_house` floorplan under three distinct lookahead regimes:
   - **Red Trajectory ($L = 0.05\text{ m}$):** Pronounced high-frequency snaking along straight corridor segments due to excessive steering gain.
   - **Green Trajectory ($L = 0.30\text{ m}$, Optimal):** Smooth, stable navigation that follows the Dijkstra centerline cleanly while carving rounded corners with ample wall clearance.
@@ -266,10 +266,10 @@ $$w_{\mathrm{free}} = w_{\mathrm{door}} - 2 \cdot r_{\mathrm{circ}}$$
 
 # 10. Graph 9: Cross-Track Error (CTE) & Angular Chatter Time-Series
 
-![Pure Pursuit CTE and Steering Chatter Time Series](file:///home/shiny/ee3305/docs/img/pure_pursuit_cte_oscillation.png)
+![Pure Pursuit CTE and Steering Chatter Time Series](img/pure_pursuit_cte_oscillation.png)
 
 ### Summary & Purpose
-- **File:** [`pure_pursuit_cte_oscillation.png`](file:///home/shiny/ee3305/docs/img/pure_pursuit_cte_oscillation.png)
+- **File:** [`pure_pursuit_cte_oscillation.png`](img/pure_pursuit_cte_oscillation.png)
 - **Top Subplot (Tracking Accuracy):** Time-series tracking of Cross-Track Error (CTE in meters) over time. Demonstrates how $L=0.30\text{ m}$ suppresses the limit-cycle oscillations seen in $L=0.05\text{ m}$ while maintaining CTE under $0.06\text{ m}$.
 - **Bottom Subplot (Actuator Stress):** Commanded angular velocity $\omega(t)$ (rad/s). Shows rapid $\pm 2.0\text{ rad/s}$ bang-bang motor reversals under underdamped lookahead ($L=0.05\text{ m}$), contrasted with smooth, low-jerk control signals under optimal tuning ($L=0.30\text{ m}$).
 
@@ -277,10 +277,10 @@ $$w_{\mathrm{free}} = w_{\mathrm{door}} - 2 \cdot r_{\mathrm{circ}}$$
 
 # 11. Graph 10: Dijkstra Costmap Potential Fields & Waypoints
 
-![Dijkstra Inflation Potential Fields and Paths](file:///home/shiny/ee3305/docs/img/dijkstra_inflation_paths.png)
+![Dijkstra Inflation Potential Fields and Paths](img/dijkstra_inflation_paths.png)
 
 ### Summary & Purpose
-- **File:** [`dijkstra_inflation_paths.png`](file:///home/shiny/ee3305/docs/img/dijkstra_inflation_paths.png)
+- **File:** [`dijkstra_inflation_paths.png`](img/dijkstra_inflation_paths.png)
 - **Content:** 2D heatmap visualization comparing the cost field contours and planned Dijkstra paths:
   - Demonstrates how the combination of $r_{\mathrm{circ}} = 0.20\text{ m}$, $r_{\mathrm{inf}} = 0.80\text{ m}$, and $q = 8.0$ produces a natural "valley" along corridor centerlines.
   - Illustrates why setting $q$ too low creates repulsive bubbles that distort paths, while setting $q=8.0$ maintains wide, unobstructed traversable corridors through doorways.
@@ -291,11 +291,11 @@ $$w_{\mathrm{free}} = w_{\mathrm{door}} - 2 \cdot r_{\mathrm{circ}}$$
 
 | Graph | Parameter | Configuration File | Tuned Value | Lower Bound Hazard | Upper Bound Hazard |
 | :--- | :--- | :--- | :---: | :--- | :--- |
-| **Graph 1** | `lookahead_distance` ($L$) | [`run.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/run.yaml) | **`0.30 m`** | Steering oscillation ($68.5\text{ rad}^2/\text{s}^4$) | Corner-cutting collision ($40.8\text{ cm}$ CTE) |
-| **Graph 2** | `lookahead_lin_vel` ($v$) | [`run.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/run.yaml) | **`0.20 m/s`** | Excessive transit duration ($120\text{ s}$) | Corner overshoot ($R_{\min} > 15\text{ cm}$) |
-| **Graph 3** | `stop_thres` ($S$) | [`run.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/run.yaml) | **`0.10 m`** | Limit-cycle hunting ($< 5\text{ cm}$) | Premature stop ($> 20\text{ cm}$) |
-| **Graph 4** | `max_access_cost` ($C_{\max}$) | [`run.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/run.yaml) | **`90`** | Doorway blockage (`No Path Found!`) | Lethal contour search leakage ($c=99$) |
-| **Graph 5** | `inflation_radius` ($r_{\mathrm{inf}}$) | [`map_loader.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/map_loader.yaml) | **`0.80 m`** | Wall-hugging path ($62.6\text{ cm}$ clearance) | Excessive path detour penalty ($+1.30\text{ m}$) |
-| **Graph 6** | `cost_exponent` ($q$) | [`map_loader.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/map_loader.yaml) | **`8.0`** | Room-filling cost cloud ($19.4\text{ m}$ detour) | Step-like loss of centering gradient |
-| **Graph 7** | `circumscribed_radius` ($r_{\mathrm{circ}}$) | [`map_loader.yaml`](file:///home/shiny/ee3305/src/ee3305_bringup/params/map_loader.yaml) | **`0.20 m`** | Physical chassis collision ($< 17.8\text{ cm}$) | Complete doorway closure cliff ($\ge 39\text{ cm}$) |
+| **Graph 1** | `lookahead_distance` ($L$) | [`run.yaml`](../src/ee3305_bringup/params/run.yaml) | **`0.30 m`** | Steering oscillation ($68.5\text{ rad}^2/\text{s}^4$) | Corner-cutting collision ($40.8\text{ cm}$ CTE) |
+| **Graph 2** | `lookahead_lin_vel` ($v$) | [`run.yaml`](../src/ee3305_bringup/params/run.yaml) | **`0.20 m/s`** | Excessive transit duration ($120\text{ s}$) | Corner overshoot ($R_{\min} > 15\text{ cm}$) |
+| **Graph 3** | `stop_thres` ($S$) | [`run.yaml`](../src/ee3305_bringup/params/run.yaml) | **`0.10 m`** | Limit-cycle hunting ($< 5\text{ cm}$) | Premature stop ($> 20\text{ cm}$) |
+| **Graph 4** | `max_access_cost` ($C_{\max}$) | [`run.yaml`](../src/ee3305_bringup/params/run.yaml) | **`90`** | Doorway blockage (`No Path Found!`) | Lethal contour search leakage ($c=99$) |
+| **Graph 5** | `inflation_radius` ($r_{\mathrm{inf}}$) | [`map_loader.yaml`](../src/ee3305_bringup/params/map_loader.yaml) | **`0.80 m`** | Wall-hugging path ($62.6\text{ cm}$ clearance) | Excessive path detour penalty ($+1.30\text{ m}$) |
+| **Graph 6** | `cost_exponent` ($q$) | [`map_loader.yaml`](../src/ee3305_bringup/params/map_loader.yaml) | **`8.0`** | Room-filling cost cloud ($19.4\text{ m}$ detour) | Step-like loss of centering gradient |
+| **Graph 7** | `circumscribed_radius` ($r_{\mathrm{circ}}$) | [`map_loader.yaml`](../src/ee3305_bringup/params/map_loader.yaml) | **`0.20 m`** | Physical chassis collision ($< 17.8\text{ cm}$) | Complete doorway closure cliff ($\ge 39\text{ cm}$) |
 | **Graph 0** | **Master Composite Matrix** | All Configs | — | Multi-variable system trade-off dashboard | 8-panel summary with Executive Scorecard |
