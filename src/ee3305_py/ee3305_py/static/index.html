@@ -493,9 +493,22 @@
                         <span class="h-label">TARGET COORDS:</span>
                         <span class="h-val yellow" id="hudTargetCoords">NONE (STANDBY)</span>
                     </div>
+                    <!-- Planner selection: available in both control modes -->
                     <div class="hud-row">
                         <span class="h-label">PATH ALGO:</span>
-                        <span class="h-val white">Dijkstra (Costmap 2D)</span>
+                        <span class="h-val cyan" id="hudPlannerAlgorithm">DIJKSTRA</span>
+                    </div>
+                    <div class="mode-switch-row">
+                        <button class="mode-toggle-btn active-manual"
+                                id="btnDijkstra"
+                                onclick="setPlannerAlgorithm('dijkstra')">
+                            [ DIJKSTRA ]
+                        </button>
+                        <button class="mode-toggle-btn"
+                                id="btnAStar"
+                                onclick="setPlannerAlgorithm('astar')">
+                            [ A* ]
+                        </button>
                     </div>
 
                     <!-- Manual Controls Area (Hidden when in Voice Control mode) -->
@@ -913,6 +926,11 @@
                 document.getElementById('hudPatrolStatus').className = 'h-val';
             }
 
+            // Synchronize the selected path planner.
+            if (telemetry.planner_algorithm) {
+                applyPlannerAlgorithmUI(telemetry.planner_algorithm);
+            }
+
             // Sync Control Mode from Backend
             if (telemetry.control_mode && telemetry.control_mode !== controlMode) {
                 applyControlModeUI(telemetry.control_mode);
@@ -937,6 +955,50 @@
         /* ============================================================
            CONTROL MODE SWITCHING (MANUAL vs VOICE)
         ============================================================ */
+        /* ============================================================
+           PATH PLANNER SELECTION (DIJKSTRA / A*)
+        ============================================================ */
+        let plannerAlgorithm = "dijkstra";
+
+        function applyPlannerAlgorithmUI(algorithm) {
+            plannerAlgorithm = algorithm;
+
+            const btnD = document.getElementById("btnDijkstra");
+            const btnA = document.getElementById("btnAStar");
+            const label = document.getElementById("hudPlannerAlgorithm");
+
+            if (!btnD || !btnA || !label) return;
+
+            btnD.classList.toggle("active-manual", algorithm === "dijkstra");
+            btnA.classList.toggle("active-voice", algorithm === "astar");
+
+            label.textContent = algorithm === "astar" ? "A*" : "DIJKSTRA";
+        }
+
+        async function setPlannerAlgorithm(algorithm) {
+            if (!["dijkstra", "astar"].includes(algorithm)) return;
+
+            try {
+                const response = await fetch("/api/planner", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ algorithm })
+                });
+
+                if (!response.ok) {
+                    throw new Error("Planner selection failed: " + response.status);
+                }
+
+                const data = await response.json();
+                applyPlannerAlgorithmUI(data.algorithm);
+
+                log("[PLANNER] Selected " + data.algorithm.toUpperCase(), "info");
+            } catch (error) {
+                console.error("Planner selection error:", error);
+                log("[PLANNER] Unable to change algorithm.", "warn");
+            }
+        }
+
         async function setControlMode(mode) {
             controlMode = mode;
             applyControlModeUI(mode);

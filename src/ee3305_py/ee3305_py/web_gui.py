@@ -34,6 +34,7 @@ class WebGUINode(Node):
         self.path_points_ = []
         self.patrol_active_ = False
         self.control_mode_ = "manual"
+        self.planner_algorithm_ = "dijkstra"
 
         # Map state & in-memory raster
         self.map_received_ = False
@@ -99,6 +100,9 @@ class WebGUINode(Node):
         self.pub_cmd_vel_ = self.create_publisher(TwistStamped, "cmd_vel", 10)
         self.pub_path_ = self.create_publisher(Path, "path", 10)
         self.pub_control_mode_ = self.create_publisher(String, "control_mode", 10)
+        self.pub_planner_algorithm_ = self.create_publisher(
+            String, "planner_algorithm", 10
+        )
 
         self.get_logger().info("Web GUI ROS 2 Node initialized with /map subscription.")
 
@@ -315,6 +319,21 @@ class WebGUINode(Node):
         self.pub_control_mode_.publish(msg)
         self.get_logger().info(f"Control Mode switched to: {self.control_mode_.upper()}")
 
+    def setPlannerAlgorithm(self, algorithm: str):
+        algorithm = algorithm.strip().lower()
+        if algorithm not in ("dijkstra", "astar"):
+            return False
+
+        msg = String()
+        msg.data = algorithm
+        self.pub_planner_algorithm_.publish(msg)
+
+        self.planner_algorithm_ = algorithm
+        self.get_logger().info(
+            f"Path planner switched to: {algorithm.upper()}"
+        )
+        return True
+
     def getStatusDict(self):
         goal_dict = None
         if self.goal_x_ is not None and self.goal_y_ is not None:
@@ -330,6 +349,7 @@ class WebGUINode(Node):
             "rooms": self.room_waypoints_,
             "patrol": self.patrol_active_,
             "control_mode": self.control_mode_,
+            "planner_algorithm": self.planner_algorithm_,
             "map_info": {
                 "received": self.map_received_,
                 "width": self.map_w_,
@@ -459,6 +479,28 @@ class WebHandler(BaseHTTPRequestHandler):
                 global_node.emergencyStop()
             self._set_headers("application/json")
             self.wfile.write(json.dumps({"status": "stopped"}).encode("utf-8"))
+
+        elif self.path == "/api/planner":
+            if not global_node:
+                self.send_error(503, "Node not ready")
+                return
+
+            algorithm = req_data.get("algorithm")
+            if not isinstance(algorithm, str):
+                self.send_error(400, "Invalid planner algorithm")
+                return
+
+            if not global_node.setPlannerAlgorithm(algorithm):
+                self.send_error(400, "Invalid planner algorithm")
+                return
+
+            self._set_headers("application/json")
+            self.wfile.write(
+                json.dumps({
+                    "status": "ok",
+                    "algorithm": global_node.planner_algorithm_,
+                }).encode("utf-8")
+            )
 
         elif self.path == "/api/mode":
             mode = str(req_data.get("mode", "manual"))

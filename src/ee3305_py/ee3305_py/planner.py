@@ -10,6 +10,8 @@ from rclpy.qos import (
 )
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid, Path
+from std_msgs.msg import String
+from ee3305_py.astar_planner import astar_search
 
 
 class DijkstraNode:
@@ -60,6 +62,14 @@ class Planner(Node):
             Path, "path_request", self.callbackSubPathRequest_, 10
         )
 
+        # Planner selection: Dijkstra remains the default.
+        self.algorithm_ = "dijkstra"
+        self.active_goal_ = False
+        self.sub_planner_algorithm_ = self.create_subscription(
+            String, "planner_algorithm",
+            self.callbackSubPlannerAlgorithm_, 10
+        )
+
         # Handles: Publishers
         # Path publisher
         self.pub_path_ = self.create_publisher(
@@ -85,6 +95,28 @@ class Planner(Node):
 
     # Callbacks =============================================================
 
+    # Select the algorithm without modifying the Dijkstra search.
+    def callbackSubPlannerAlgorithm_(self, msg: String):
+        algorithm = msg.data.strip().lower()
+
+        if algorithm not in ("dijkstra", "astar"):
+            self.get_logger().warn(
+                f"Unsupported planner algorithm: {algorithm}"
+            )
+            return
+
+        if algorithm == self.algorithm_:
+            return
+
+        self.algorithm_ = algorithm
+        self.get_logger().info(
+            f"Active planner: {algorithm.upper()}"
+        )
+
+        # Replan the current destination when switching.
+        if self.active_goal_:
+            self.has_new_request_ = True
+
     # Path request subscriber callback
     def callbackSubPathRequest_(self, msg: Path):
         if len(msg.poses) == 0:
@@ -94,6 +126,7 @@ class Planner(Node):
             empty_path.header.frame_id = "map"
             self.pub_path_.publish(empty_path)
             self.has_new_request_ = False
+            self.active_goal_ = False
             return
 
         if len(msg.poses) < 2:
@@ -105,6 +138,7 @@ class Planner(Node):
         self.goal_y_ = msg.poses[1].pose.position.y
 
         self.has_new_request_ = True
+        self.active_goal_ = True
 
     # Global costmap subscriber callback
     # This is only run once because the costmap is only published once, at the start of the launch.
@@ -123,10 +157,19 @@ class Planner(Node):
         if not self.received_map_ or not self.has_new_request_:
             return  # silently return if no new request or map is not received.
 
-        # run the path planner
-        self.dijkstra_(self.rbt_x_, self.rbt_y_, self.goal_x_, self.goal_y_)
-
+        # Run exactly one algorithm for this planning request.
         self.has_new_request_ = False
+
+        if self.algorithm_ == "astar":
+            self.astar_(
+                self.rbt_x_, self.rbt_y_,
+                self.goal_x_, self.goal_y_
+            )
+        else:
+            self.dijkstra_(
+                self.rbt_x_, self.rbt_y_,
+                self.goal_x_, self.goal_y_
+            )
 
     # Publish the interpolated path for testing
     def publishInterpolatedPath(self, start_x, start_y, goal_x, goal_y):
@@ -181,6 +224,50 @@ class Planner(Node):
     # Returns true if the cell column and cell row is outside the costmap.
     def outOfMap_(self, c, r):
         return c < 0 or c >= self.costmap_cols_ or r < 0 or r >= self.costmap_rows_
+
+    # Independent A* algorithm adapter.
+    # The actual search is implemented in astar_planner.py.
+    def astar_(self, start_x, start_y, goal_x, goal_y):
+        start = self.XYToCR_(start_x, start_y)
+        goal = self.XYToCR_(goal_x, goal_y)
+
+        if self.outOfMap_(*start) or self.outOfMap_(*goal):
+            self.get_logger().warn("A*: Start or goal outside map")
+            return
+
+        path_cells = astar_search(
+            costmap=self.costmap_,
+            width=self.costmap_cols_,
+            height=self.costmap_rows_,
+            resolution=self.costmap_resolution_,
+            start=start,
+            goal=goal,
+            max_access_cost=self.max_access_cost_,
+        )
+
+        if path_cells is None:
+            self.get_logger().warn("A*: No Path Found!")
+            return
+
+        msg_path = Path()
+        msg_path.header.stamp = self.get_clock().now().to_msg()
+        msg_path.header.frame_id = "map"
+
+        for c, r in path_cells:
+            x, y = self.CRToXY_(c, r)
+            pose = PoseStamped()
+            pose.header = msg_path.header
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.w = 1.0
+            msg_path.poses.append(pose)
+
+        self.pub_path_.publish(msg_path)
+        self.get_logger().info(
+            f"A* Path Found from Rbt @ ({start_x:.3f}, {start_y:.3f}) "
+            f"to Goal @ ({goal_x:.3f}, {goal_y:.3f}) "
+            f"with {len(path_cells)} waypoints."
+        )
 
     # Runs the path planning algorithm based on the world coordinates.
     def dijkstra_(self, start_x, start_y, goal_x, goal_y):
