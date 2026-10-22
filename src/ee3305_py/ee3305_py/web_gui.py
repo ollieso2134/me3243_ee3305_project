@@ -4,6 +4,7 @@ import json
 import threading
 import tempfile
 import time
+import subprocess
 from collections import deque
 from urllib.parse import urlsplit, parse_qs
 from math import atan2
@@ -16,9 +17,10 @@ from ee3305_py.planner_comparison import compare_all
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
-from geometry_msgs.msg import PoseStamped, TwistStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped, Point
 from nav_msgs.msg import Odometry, Path, OccupancyGrid
-from std_msgs.msg import Int32, Bool, String
+from std_msgs.msg import Int32, Bool, String, Empty
+from visualization_msgs.msg import Marker, MarkerArray
 
 
 class WebGUINode(Node):
@@ -36,6 +38,7 @@ class WebGUINode(Node):
         self.patrol_active_ = False
         self.control_mode_ = "manual"
         self.planner_algorithm_ = "dijkstra"
+        self.controller_mode_ = "rpp"
 
         # Map state & in-memory raster
         self.map_received_ = False
@@ -121,8 +124,29 @@ class WebGUINode(Node):
         self.pub_planner_algorithm_ = self.create_publisher(
             String, "planner_algorithm", 10
         )
+        self.pub_controller_mode_ = self.create_publisher(
+            String, "controller_mode", 10
+        )
 
-        self.get_logger().info("Web GUI ROS 2 Node initialized with /map subscription.")
+        # Dynamic Obstacle State & Publishers (Method A Canvas Placement)
+        self.dynamic_obstacles_ = []
+        self.obstacle_counter_ = 0
+        self.obs_lock_ = threading.RLock()
+        self.pub_spawn_obs_ = self.create_publisher(Point, "spawn_obstacle_pt", 10)
+        self.pub_clear_obs_ = self.create_publisher(Empty, "clear_obstacles", 10)
+        self.pub_dynamic_markers_ = self.create_publisher(MarkerArray, "dynamic_obstacles", 10)
+
+        # Gazebo Harmonic world spawn offset relative to /map frame:
+        # In sim_truth, robot spawns at Gazebo (-2.0, -0.5), which is mapped to (0.0, 0.0) in /map.
+        # Thus Gazebo world coords = (map_x - 2.00, map_y - 0.50).
+        self.declare_parameter("gz_spawn_offset_x", -2.0)
+        self.declare_parameter("gz_spawn_offset_y", -0.5)
+        self.gz_offset_x_ = float(self.get_parameter("gz_spawn_offset_x").value)
+        self.gz_offset_y_ = float(self.get_parameter("gz_spawn_offset_y").value)
+
+        self.get_logger().info(
+            f"Web GUI ROS 2 Node initialized with /map and /dynamic_obstacles (Gazebo offset: [{self.gz_offset_x_:.2f}, {self.gz_offset_y_:.2f}])."
+        )
 
     def callbackAIReady_(self, msg):
         with self.ai_lock_:
@@ -390,6 +414,170 @@ class WebGUINode(Node):
         )
         return True
 
+    def setControllerMode(self, mode: str):
+        mode = mode.strip().lower()
+        if mode not in ("standard", "improved", "rpp"):
+            return False
+
+        msg = String()
+        msg.data = mode
+        self.pub_controller_mode_.publish(msg)
+
+        self.controller_mode_ = mode
+        self.get_logger().info(
+            f"Controller mode switched to: {mode.upper()}"
+        )
+        return True
+
+    def spawnObstacle(self, x: float, y: float):
+        gz_x = round(float(x) + self.gz_offset_x_, 3)
+        gz_y = round(float(y) + self.gz_offset_y_, 3)
+
+        with self.obs_lock_:
+            self.obstacle_counter_ += 1
+            obs_name = f"dyn_obs_{self.obstacle_counter_}"
+            obs = {
+                "id": self.obstacle_counter_,
+                "name": obs_name,
+                "x": round(float(x), 3),
+                "y": round(float(y), 3),
+                "gz_x": gz_x,
+                "gz_y": gz_y,
+                "radius": 0.20
+            }
+            self.dynamic_obstacles_.append(obs)
+
+        # 1. Publish point for planner & controller (in ROS /map frame)
+        pt = Point()
+        pt.x = float(x)
+        pt.y = float(y)
+        pt.z = 0.0
+        self.pub_spawn_obs_.publish(pt)
+
+        # 2. Publish RViz2 visualization marker
+        self.publishObstacleMarkers_()
+
+        # 3. Asynchronously spawn 3D collision cylinder in Gazebo Harmonic
+        def _spawn_gz(name, gx, gy, mx, my):
+            sdf_str = (
+                f'<sdf version="1.8">'
+                f'<model name="{name}">'
+                f'<static>true</static>'
+                f'<link name="link">'
+                f'<collision name="col"><geometry><cylinder><radius>0.20</radius><length>0.60</length></cylinder></geometry></collision>'
+                f'<visual name="vis"><geometry><cylinder><radius>0.20</radius><length>0.60</length></cylinder></geometry>'
+                f'<material><ambient>0.95 0.1 0.1 1</ambient><diffuse>0.95 0.1 0.1 1</diffuse></material></visual>'
+                f'</link></model></sdf>'
+            )
+            cmd = [
+                "ros2", "run", "ros_gz_sim", "create",
+                "-world", "default",
+                "-name", str(name),
+                "-string", sdf_str,
+                "-x", f"{gx:.3f}",
+                "-y", f"{gy:.3f}",
+                "-z", "0.30"
+            ]
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=4.0, env=os.environ.copy())
+                if res.returncode == 0:
+                    self.get_logger().info(
+                        f"[GAZEBO SPAWNED] Model '{name}' spawned in 3D world at Gazebo ({gx:.2f}, {gy:.2f}) [Map: ({mx:.2f}, {my:.2f})]"
+                    )
+                else:
+                    self.get_logger().warn(f"[GAZEBO SPAWN ERROR] {res.stderr.strip() or res.stdout.strip()}")
+            except Exception as e:
+                self.get_logger().warn(f"[GAZEBO SPAWN EXCEPTION] {e}")
+
+        threading.Thread(target=_spawn_gz, args=(obs_name, gz_x, gz_y, x, y), daemon=True).start()
+        self.get_logger().info(
+            f"[DYNAMIC OBSTACLE] Spawned {obs_name} at Map ({x:.2f}, {y:.2f}) | Gazebo ({gz_x:.2f}, {gz_y:.2f})"
+        )
+        return obs
+
+    def clearAllObstacles(self):
+        with self.obs_lock_:
+            obs_names = [o["name"] for o in self.dynamic_obstacles_]
+            self.dynamic_obstacles_.clear()
+
+        # 1. Publish clear signal to planner & controller
+        self.pub_clear_obs_.publish(Empty())
+
+        # 2. Clear RViz2 markers
+        marker_arr = MarkerArray()
+        del_marker = Marker()
+        del_marker.action = Marker.DELETEALL
+        marker_arr.markers.append(del_marker)
+        self.pub_dynamic_markers_.publish(marker_arr)
+
+        # 3. Asynchronously remove all spawned models from Gazebo Harmonic
+        def _remove_gz(names):
+            for name in names:
+                cmd = [
+                    "gz", "service", "-s", "/world/default/remove",
+                    "--reqtype", "gz.msgs.Entity",
+                    "--reptype", "gz.msgs.Boolean",
+                    "--timeout", "2000",
+                    "--req", f'name: "{name}", type: 2'
+                ]
+                try:
+                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=3.0, env=os.environ.copy())
+                    self.get_logger().info(f"[GAZEBO REMOVED] Model '{name}' removed from 3D world: {res.stdout.strip()}")
+                except Exception as e:
+                    self.get_logger().warn(f"[GAZEBO REMOVE EXCEPTION] {e}")
+
+        threading.Thread(target=_remove_gz, args=(obs_names,), daemon=True).start()
+        self.get_logger().info(f"[DYNAMIC OBSTACLE] Cleared {len(obs_names)} dynamic obstacle(s).")
+        return {"status": "ok", "cleared": len(obs_names)}
+
+    def publishObstacleMarkers_(self):
+        marker_arr = MarkerArray()
+        now = self.get_clock().now().to_msg()
+        with self.obs_lock_:
+            for obs in self.dynamic_obstacles_:
+                # Cylinder marker
+                m = Marker()
+                m.header.stamp = now
+                m.header.frame_id = "map"
+                m.ns = "dynamic_obstacles"
+                m.id = obs["id"]
+                m.type = Marker.CYLINDER
+                m.action = Marker.ADD
+                m.pose.position.x = obs["x"]
+                m.pose.position.y = obs["y"]
+                m.pose.position.z = 0.25
+                m.pose.orientation.w = 1.0
+                m.scale.x = 0.36
+                m.scale.y = 0.36
+                m.scale.z = 0.50
+                m.color.r = 1.0
+                m.color.g = 0.1
+                m.color.b = 0.1
+                m.color.a = 0.85
+                marker_arr.markers.append(m)
+
+                # Text label
+                lbl = Marker()
+                lbl.header.stamp = now
+                lbl.header.frame_id = "map"
+                lbl.ns = "dynamic_obstacles_text"
+                lbl.id = obs["id"] + 1000
+                lbl.type = Marker.TEXT_VIEW_FACING
+                lbl.action = Marker.ADD
+                lbl.pose.position.x = obs["x"]
+                lbl.pose.position.y = obs["y"]
+                lbl.pose.position.z = 0.65
+                lbl.pose.orientation.w = 1.0
+                lbl.scale.z = 0.15
+                lbl.color.r = 1.0
+                lbl.color.g = 0.8
+                lbl.color.b = 0.0
+                lbl.color.a = 1.0
+                lbl.text = f"OBSTACLE #{obs['id']}"
+                marker_arr.markers.append(lbl)
+
+        self.pub_dynamic_markers_.publish(marker_arr)
+
     def getStatusDict(self):
         goal_dict = None
         if self.goal_x_ is not None and self.goal_y_ is not None:
@@ -406,6 +594,8 @@ class WebGUINode(Node):
             "patrol": self.patrol_active_,
             "control_mode": self.control_mode_,
             "planner_algorithm": self.planner_algorithm_,
+            "controller_mode": self.controller_mode_,
+            "dynamic_obstacles": list(self.dynamic_obstacles_),
             "map_info": {
                 "received": self.map_received_,
                 "width": self.map_w_,
@@ -584,6 +774,28 @@ class WebHandler(BaseHTTPRequestHandler):
                 }).encode("utf-8")
             )
 
+        elif self.path == "/api/controller":
+            if not global_node:
+                self.send_error(503, "Node not ready")
+                return
+
+            mode = req_data.get("mode")
+            if not isinstance(mode, str):
+                self.send_error(400, "Invalid controller mode")
+                return
+
+            if not global_node.setControllerMode(mode):
+                self.send_error(400, "Invalid controller mode")
+                return
+
+            self._set_headers("application/json")
+            self.wfile.write(
+                json.dumps({
+                    "status": "ok",
+                    "mode": global_node.controller_mode_,
+                }).encode("utf-8")
+            )
+
         elif self.path == "/api/mode":
             mode = str(req_data.get("mode", "manual"))
             if mode not in ("manual", "voice"):
@@ -592,6 +804,27 @@ class WebHandler(BaseHTTPRequestHandler):
                 global_node.setControlMode(mode)
             self._set_headers("application/json")
             self.wfile.write(json.dumps({"status": "ok", "mode": mode}).encode("utf-8"))
+
+        elif self.path == "/api/spawn_obstacle":
+            try:
+                gx = float(req_data.get("x", 0.0))
+                gy = float(req_data.get("y", 0.0))
+            except (ValueError, TypeError):
+                self.send_error(400, "Invalid coordinates")
+                return
+
+            obs = {}
+            if global_node:
+                obs = global_node.spawnObstacle(gx, gy)
+            self._set_headers("application/json")
+            self.wfile.write(json.dumps({"status": "ok", "obstacle": obs}).encode("utf-8"))
+
+        elif self.path == "/api/clear_obstacles":
+            res = {"status": "ok", "cleared": 0}
+            if global_node:
+                res = global_node.clearAllObstacles()
+            self._set_headers("application/json")
+            self.wfile.write(json.dumps(res).encode("utf-8"))
         else:
             self.send_error(404, "Unknown API endpoint")
 

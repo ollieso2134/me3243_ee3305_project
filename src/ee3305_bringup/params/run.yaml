@@ -11,6 +11,17 @@ controller:
     stop_thres: 0.1 # {double} [m]
     max_lin_vel: 0.2 # {double} [m/s]
     max_ang_vel: 2.0 # {double} [rad/s]
+    controller_mode: "rpp" # {string} "standard" | "improved" | "rpp"
+    min_lin_vel: 0.05 # {double} [m/s]
+    k_curv: 0.6 # {double} Curvature velocity scaling factor
+    decel_dist: 0.6 # {double} [m] Goal deceleration distance
+    rotate_threshold: 0.785 # {double} [rad] (~45 deg) Rotate-to-heading threshold
+    rotate_tolerance: 0.26 # {double} [rad] (~15 deg) Exit rotation threshold
+    rotate_kp: 1.8 # {double} Proportional yaw gain
+    adaptive_lookahead: true # {bool} Velocity-scaled adaptive lookahead
+    min_lookahead: 0.20 # {double} [m]
+    max_lookahead: 0.45 # {double} [m]
+    lookahead_time: 1.5 # {double} [s]
 
 planner:
   ros__parameters:

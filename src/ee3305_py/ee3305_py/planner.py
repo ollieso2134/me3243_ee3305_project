@@ -1,5 +1,5 @@
 from heapq import heappush, heappop
-from math import hypot, floor, inf
+from math import hypot, floor, inf, cos, sin, atan2, ceil
 
 import rclpy
 from rclpy.node import Node
@@ -7,11 +7,13 @@ from rclpy.qos import (
     QoSProfile,
     DurabilityPolicy,
     qos_profile_services_default,
+    qos_profile_sensor_data,
 )
 from rcl_interfaces.msg import SetParametersResult
-from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import OccupancyGrid, Path
-from std_msgs.msg import String
+from geometry_msgs.msg import PoseStamped, Point
+from nav_msgs.msg import OccupancyGrid, Path, Odometry
+from sensor_msgs.msg import LaserScan
+from std_msgs.msg import String, Empty
 from ee3305_py.astar_planner import astar_search
 from ee3305_py.theta_planner import theta_search
 
@@ -75,10 +77,28 @@ class Planner(Node):
             self.callbackSubPlannerAlgorithm_, 10
         )
 
+        # Dynamic Obstacle Subscribers (2D LiDAR, Odometry & Interactive Placement)
+        self.sub_scan_ = self.create_subscription(
+            LaserScan, "scan", self.callbackSubScan_, qos_profile_sensor_data
+        )
+        self.sub_odom_ = self.create_subscription(
+            Odometry, "odom", self.callbackSubOdom_, 10
+        )
+        self.sub_spawn_obs_ = self.create_subscription(
+            Point, "spawn_obstacle_pt", self.callbackSubSpawnObstacle_, 10
+        )
+        self.sub_clear_obs_ = self.create_subscription(
+            Empty, "clear_obstacles", self.callbackSubClearObstacles_, 10
+        )
+
         # Handles: Publishers
         # Path publisher
         self.pub_path_ = self.create_publisher(
             Path, "path", 10
+        )
+        # Dynamic costmap publisher for visualization & verification
+        self.pub_dynamic_costmap_ = self.create_publisher(
+            OccupancyGrid, "dynamic_costmap", 10
         )
 
         # Handles: Timers
@@ -89,14 +109,22 @@ class Planner(Node):
         self.received_map_ = False
         self.rbt_x_ = 0.0
         self.rbt_y_ = 0.0
+        self.rbt_yaw_ = 0.0
         self.goal_x_ = 0.0
         self.goal_y_ = 0.0
         self.costmap_ = []
+        self.effective_costmap_ = []
         self.costmap_resolution_ = 0.05
         self.costmap_origin_x_ = 0.0
         self.costmap_origin_y_ = 0.0
         self.costmap_rows_ = 0
         self.costmap_cols_ = 0
+
+        # Dynamic Obstacle Parameters & Tracking
+        self.placed_obstacles_ = []    # list of (x, y, radius)
+        self.lidar_obstacles_ = {}     # (c, r) -> timestamp
+        self.obs_radius_ = 0.20        # lethal cylinder radius (m)
+        self.inf_radius_ = 0.40        # inflation boundary radius (m)
 
     # Dynamic Reconfigure Parameter Callback
     def callbackParameters_(self, params):
@@ -155,7 +183,7 @@ class Planner(Node):
     # Global costmap subscriber callback
     # This is only run once because the costmap is only published once, at the start of the launch.
     def callbackSubGlobalCostmap_(self, msg: OccupancyGrid):
-        self.costmap_ = msg.data
+        self.costmap_ = list(msg.data)
         self.costmap_resolution_ = msg.info.resolution
         self.costmap_origin_x_ = msg.info.origin.position.x
         self.costmap_origin_y_ = msg.info.origin.position.y
@@ -163,6 +191,136 @@ class Planner(Node):
         self.costmap_cols_ = msg.info.width
 
         self.received_map_ = True
+        self.updateEffectiveCostmap_()
+
+    # Odometry subscriber callback for laser beam projection
+    def callbackSubOdom_(self, msg: Odometry):
+        self.rbt_x_ = msg.pose.pose.position.x
+        self.rbt_y_ = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        delta_y = 2.0 * (q.w * q.z + q.x * q.y)
+        delta_x = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        self.rbt_yaw_ = atan2(delta_y, delta_x)
+
+    # Dynamic obstacle manual spawn callback (from Web GUI Method A)
+    def callbackSubSpawnObstacle_(self, msg: Point):
+        self.placed_obstacles_.append((msg.x, msg.y, self.obs_radius_))
+        self.get_logger().info(f"[DYNAMIC OBSTACLE] Placed at ({msg.x:.2f}, {msg.y:.2f}). Re-routing...")
+        self.updateEffectiveCostmap_()
+        if self.active_goal_:
+            self.has_new_request_ = True
+
+    # Clear all dynamic obstacles callback (from Web GUI Clear All button)
+    def callbackSubClearObstacles_(self, msg: Empty):
+        self.get_logger().info("[DYNAMIC OBSTACLE] Clearing all dynamic obstacles.")
+        self.placed_obstacles_.clear()
+        self.lidar_obstacles_.clear()
+        self.updateEffectiveCostmap_()
+        if self.active_goal_:
+            self.has_new_request_ = True
+
+    # 2D LiDAR subscriber callback: real-time unmapped obstacle detection
+    def callbackSubScan_(self, msg: LaserScan):
+        if not self.received_map_:
+            return
+
+        now = self.get_clock().now().nanoseconds / 1e9
+        new_obs_found = False
+
+        # Prune expired lidar detections older than 2.5 seconds
+        expired_keys = [k for k, t in self.lidar_obstacles_.items() if (now - t) > 2.5]
+        for k in expired_keys:
+            del self.lidar_obstacles_[k]
+            new_obs_found = True
+
+        angle = msg.angle_min
+        angle_inc = msg.angle_increment
+        for r in msg.ranges:
+            if msg.range_min < r < min(3.5, msg.range_max):
+                beam_angle = self.rbt_yaw_ + angle
+                ox = self.rbt_x_ + r * cos(beam_angle)
+                oy = self.rbt_y_ + r * sin(beam_angle)
+
+                c, row = self.XYToCR_(ox, oy)
+                if not self.outOfMap_(c, row):
+                    idx = self.CRToIndex_(c, row)
+                    # If this cell in the static costmap is open space (cost < 70)
+                    if 0 <= self.costmap_[idx] < 70:
+                        cell = (c, row)
+                        if cell not in self.lidar_obstacles_:
+                            new_obs_found = True
+                        self.lidar_obstacles_[cell] = now
+            angle += angle_inc
+
+        if new_obs_found:
+            self.updateEffectiveCostmap_()
+            if self.active_goal_:
+                self.has_new_request_ = True
+
+    # Recomputes the effective costmap by overlaying dynamic obstacles with inflation
+    def updateEffectiveCostmap_(self):
+        if not self.received_map_:
+            return
+
+        eff = list(self.costmap_)
+        all_centers = list(self.placed_obstacles_)
+
+        for (c, r) in self.lidar_obstacles_.keys():
+            x, y = self.CRToXY_(c, r)
+            all_centers.append((x, y, self.obs_radius_))
+
+        if len(all_centers) == 0:
+            self.effective_costmap_ = eff
+            self.publishDynamicCostmap_()
+            return
+
+        inf_cells = int(ceil(self.inf_radius_ / self.costmap_resolution_))
+
+        for ox, oy, r_obs in all_centers:
+            center_c, center_r = self.XYToCR_(ox, oy)
+            for dc in range(-inf_cells, inf_cells + 1):
+                for dr in range(-inf_cells, inf_cells + 1):
+                    cc = center_c + dc
+                    cr = center_r + dr
+                    if self.outOfMap_(cc, cr):
+                        continue
+                    dist = hypot(dc * self.costmap_resolution_, dr * self.costmap_resolution_)
+                    if dist <= r_obs:
+                        dyn_cost = 100
+                    elif dist <= self.inf_radius_:
+                        ratio = (dist - r_obs) / (self.inf_radius_ - r_obs)
+                        dyn_cost = int(round(100.0 * (1.0 - ratio)))
+                    else:
+                        continue
+
+                    idx = self.CRToIndex_(cc, cr)
+                    current_cost = eff[idx]
+                    if current_cost >= 0:
+                        eff[idx] = max(current_cost, dyn_cost)
+
+        self.effective_costmap_ = eff
+        self.publishDynamicCostmap_()
+
+    # Publishes the merged dynamic costmap for visualization
+    def publishDynamicCostmap_(self):
+        if not self.received_map_:
+            return
+        msg = OccupancyGrid()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "map"
+        msg.info.resolution = self.costmap_resolution_
+        msg.info.width = self.costmap_cols_
+        msg.info.height = self.costmap_rows_
+        msg.info.origin.position.x = self.costmap_origin_x_
+        msg.info.origin.position.y = self.costmap_origin_y_
+        msg.data = [int(v) for v in self.effective_costmap_]
+        self.pub_dynamic_costmap_.publish(msg)
+
+    # Returns the active effective costmap (merging static + dynamic obstacles)
+    def getEffectiveCostmap_(self):
+        if len(self.effective_costmap_) > 0:
+            return self.effective_costmap_
+        return self.costmap_
 
     # runs the path planner at regular intervals as long as there is a new path request.
     def callbackTimer_(self):
@@ -252,8 +410,9 @@ class Planner(Node):
             self.get_logger().warn("A*: Start or goal outside map")
             return
 
+        costmap = self.getEffectiveCostmap_()
         path_cells = astar_search(
-            costmap=self.costmap_,
+            costmap=costmap,
             width=self.costmap_cols_,
             height=self.costmap_rows_,
             resolution=self.costmap_resolution_,
@@ -293,8 +452,9 @@ class Planner(Node):
         start = self.XYToCR_(start_x, start_y)
         goal = self.XYToCR_(goal_x, goal_y)
 
+        costmap = self.getEffectiveCostmap_()
         path_cells = theta_search(
-            costmap=self.costmap_,
+            costmap=costmap,
             width=self.costmap_cols_,
             height=self.costmap_rows_,
             resolution=self.costmap_resolution_,
@@ -373,9 +533,11 @@ class Planner(Node):
             )
             return
 
+        costmap = self.getEffectiveCostmap_()
+
         # Check if start or goal is on an obstacle (cost > max_access_cost)
         goal_idx = self.CRToIndex_(goal_c, goal_r)
-        goal_cost = self.costmap_[goal_idx]
+        goal_cost = costmap[goal_idx]
         if goal_cost < 0 or goal_cost > self.max_access_cost_:
             self.get_logger().warn(
                 f"Goal ({goal_x:.3f}, {goal_y:.3f}) is inaccessible (cost={goal_cost} > {self.max_access_cost_})!"
@@ -475,7 +637,7 @@ class Planner(Node):
 
                 # Ignore if cell cost exceeds max_access_cost or is unknown (-1)
                 nb_idx = self.CRToIndex_(nb_c, nb_r)
-                map_cost = self.costmap_[nb_idx]
+                map_cost = costmap[nb_idx]
                 if map_cost < 0 or map_cost > self.max_access_cost_:
                     continue
 

@@ -180,6 +180,43 @@
             color: #fff;
         }
 
+        .btn-obstacle-main {
+            border: 1px solid var(--yellow);
+            color: var(--yellow);
+            background: rgba(255, 255, 0, 0.08);
+        }
+
+        .btn-obstacle-main:hover {
+            background: var(--yellow);
+            color: #000;
+        }
+
+        .btn-obstacle-main.active-obstacle {
+            border: 1px solid #ff9900;
+            background: #ff9900;
+            color: #000;
+            font-weight: 700;
+            box-shadow: 0 0 14px rgba(255, 153, 0, 0.6);
+            animation: pulse-obs 1.5s infinite;
+        }
+
+        @keyframes pulse-obs {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.82; }
+        }
+
+        .btn-clear-obs-main {
+            border: 1px solid #666;
+            color: #bbb;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .btn-clear-obs-main:hover {
+            border-color: var(--white);
+            color: var(--white);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
         /* PANEL 1: MAGENTA BORDER (CONTROL ARCHITECTURE & DISPATCH) */
         .hud-panel-magenta {
             border: 1px solid var(--magenta);
@@ -464,6 +501,12 @@
                 <button class="btn-bracket btn-patrol-main" id="btnPatrol" onclick="togglePatrol()">[ 🔄 DISPATCH PATROL (P) ]</button>
             </div>
 
+            <!-- DYNAMIC OBSTACLE ACTIONS: METHOD A MAP PLACEMENT & CLEAR ALL -->
+            <div class="action-btns-row" style="margin-top: 4px;">
+                <button class="btn-bracket btn-obstacle-main" id="btnPlaceObstacle" onclick="toggleObstacleMode()">[ 🧱 PLACE OBSTACLE (O) ]</button>
+                <button class="btn-bracket btn-clear-obs-main" id="btnClearObstacles" onclick="clearAllObstacles()">[ 🧹 CLEAR ALL ]</button>
+            </div>
+
             <!-- PANEL 1: MAGENTA BORDER (CONTROL ARCHITECTURE & DISPATCH) -->
             <div class="hud-panel-magenta">
                 <div class="hud-panel-header-magenta">
@@ -518,6 +561,28 @@
                                 id="btnComparePlanners"
                                 onclick="comparePlanners()">
                             [ COMPARE PLANNERS ]
+                        </button>
+                    </div>
+                    <!-- Controller selection: Standard / Improved / RPP -->
+                    <div class="hud-row" style="margin-top: 6px;">
+                        <span class="h-label">CONTROLLER:</span>
+                        <span class="h-val green" id="hudControllerMode">RPP</span>
+                    </div>
+                    <div class="mode-switch-row">
+                        <button class="mode-toggle-btn"
+                                id="btnCtrlStandard"
+                                onclick="setControllerMode('standard')">
+                            [ STANDARD PP ]
+                        </button>
+                        <button class="mode-toggle-btn"
+                                id="btnCtrlImproved"
+                                onclick="setControllerMode('improved')">
+                            [ IMPROVED PP ]
+                        </button>
+                        <button class="mode-toggle-btn active-voice"
+                                id="btnCtrlRPP"
+                                onclick="setControllerMode('rpp')">
+                            [ RPP ]
                         </button>
                     </div>
 
@@ -593,6 +658,10 @@
                     <div class="hud-row">
                         <span class="h-label">SAFETY STOP:</span>
                         <span class="h-val green" id="hudSafetyStatus">ENGAGED / READY</span>
+                    </div>
+                    <div class="hud-row">
+                        <span class="h-label">DYNAMIC OBSTACLES:</span>
+                        <span class="h-val yellow" id="hudObstacleCount">0 ACTIVE</span>
                     </div>
                 </div>
             </div>
@@ -696,15 +765,25 @@
         updateClock();
 
         /* ============================================================
-           CURSOR COORDINATES
+           CURSOR COORDINATES & PLACEMENT TRACKING
         ============================================================ */
+        let obstaclePlacementMode = false;
+        let lastMouseCanvasPos = null;
+
         canvas.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
             const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
             const cy = (e.clientY - rect.top) * (canvas.height / rect.height);
+            lastMouseCanvasPos = { x: cx, y: cy };
             const w = canvasToWorld(cx, cy);
+            const gzX = w.x - 2.0;
+            const gzY = w.y - 0.5;
             document.getElementById('cursorWorld').textContent =
-                `Cursor World Pose: X = ${w.x >= 0 ? '+' : ''}${w.x.toFixed(2)} m | Y = ${w.y >= 0 ? '+' : ''}${w.y.toFixed(2)} m`;
+                `Cursor Pose: Map [X = ${w.x >= 0 ? '+' : ''}${w.x.toFixed(2)}, Y = ${w.y >= 0 ? '+' : ''}${w.y.toFixed(2)}] | Gazebo [X = ${gzX >= 0 ? '+' : ''}${gzX.toFixed(2)}, Y = ${gzY >= 0 ? '+' : ''}${gzY.toFixed(2)}]`;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            lastMouseCanvasPos = null;
         });
 
         /* ============================================================
@@ -746,6 +825,74 @@
                 ctx.textAlign = "left";
                 ctx.fillText(room.name, pt.x + 12, pt.y + 4);
             });
+
+            // 2b. Dynamic Obstacles (Real-time 2D LiDAR detected / placed)
+            if (telemetry.dynamic_obstacles && telemetry.dynamic_obstacles.length > 0) {
+                const nowSec = Date.now() / 1000.0;
+                telemetry.dynamic_obstacles.forEach(obs => {
+                    const oPt = worldToCanvas(obs.x, obs.y);
+                    const coreR = Math.max(8, (obs.radius || 0.20) / res * scale);
+                    const infR = Math.max(16, 0.40 / res * scale);
+
+                    // Pulsating outer inflation buffer (hazard zone)
+                    const pulse = 0.90 + 0.10 * Math.sin(nowSec * 5.0);
+                    ctx.beginPath();
+                    ctx.arc(oPt.x, oPt.y, infR * pulse, 0, Math.PI * 2);
+                    ctx.fillStyle = "rgba(255, 30, 30, 0.22)";
+                    ctx.fill();
+                    ctx.strokeStyle = "rgba(255, 80, 80, 0.55)";
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([4, 3]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // Solid hazard cylinder core
+                    ctx.beginPath();
+                    ctx.arc(oPt.x, oPt.y, coreR, 0, Math.PI * 2);
+                    ctx.fillStyle = "#ff1a1a";
+                    ctx.fill();
+                    ctx.strokeStyle = "#ffff00";
+                    ctx.lineWidth = 2.0;
+                    ctx.stroke();
+
+                    // Obstacle hazard label
+                    ctx.font = "bold 10px 'JetBrains Mono', monospace";
+                    ctx.fillStyle = "#ffff00";
+                    ctx.textAlign = "center";
+                    ctx.fillText(`🧱 OBS #${obs.id}`, oPt.x, oPt.y - coreR - 5);
+                    ctx.font = "9px 'JetBrains Mono', monospace";
+                    ctx.fillStyle = "#ff9999";
+                    ctx.fillText(`(${obs.x.toFixed(2)}, ${obs.y.toFixed(2)})`, oPt.x, oPt.y + coreR + 11);
+                });
+            }
+
+            // Ghost placement preview under cursor when in obstacle placement mode
+            if (obstaclePlacementMode && lastMouseCanvasPos) {
+                const previewCoreR = Math.max(8, 0.20 / res * scale);
+                const previewInfR = Math.max(16, 0.40 / res * scale);
+                ctx.beginPath();
+                ctx.arc(lastMouseCanvasPos.x, lastMouseCanvasPos.y, previewInfR, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(255, 170, 0, 0.16)";
+                ctx.fill();
+                ctx.strokeStyle = "#ffaa00";
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 4]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                ctx.beginPath();
+                ctx.arc(lastMouseCanvasPos.x, lastMouseCanvasPos.y, previewCoreR, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(255, 68, 0, 0.6)";
+                ctx.fill();
+                ctx.strokeStyle = "#ffff00";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.font = "bold 10px 'JetBrains Mono', monospace";
+                ctx.fillStyle = "#ffff00";
+                ctx.textAlign = "center";
+                ctx.fillText("CLICK MAP TO DROP OBSTACLE", lastMouseCanvasPos.x, lastMouseCanvasPos.y - previewInfR - 6);
+            }
 
             // 3. Dijkstra Planned Path Line (Neon Cyan Dashed)
             if (telemetry.path && telemetry.path.length > 1) {
@@ -823,7 +970,7 @@
         }
 
         /* ============================================================
-           CLICK MAP TO DISPATCH
+           CLICK MAP TO DISPATCH OR PLACE OBSTACLE
         ============================================================ */
         canvas.addEventListener('click', (e) => {
             if (controlMode === 'voice') {
@@ -836,6 +983,12 @@
             const cx = (e.clientX - rect.left) * scaleX;
             const cy = (e.clientY - rect.top) * scaleY;
             const w = canvasToWorld(cx, cy);
+
+            if (obstaclePlacementMode) {
+                // Method A: Place dynamic obstacle at clicked world position
+                placeObstacleAt(w.x, w.y);
+                return;
+            }
 
             document.getElementById('hudSafetyStatus').textContent = 'ENGAGED / ACTIVE';
             document.getElementById('hudSafetyStatus').className = 'h-val green';
@@ -936,9 +1089,22 @@
                 document.getElementById('hudPatrolStatus').className = 'h-val';
             }
 
+            // Synchronize Dynamic Obstacle Count
+            const obsCountEl = document.getElementById('hudObstacleCount');
+            if (obsCountEl) {
+                const count = (telemetry.dynamic_obstacles || []).length;
+                obsCountEl.textContent = `${count} ACTIVE`;
+                obsCountEl.className = count > 0 ? 'h-val red' : 'h-val yellow';
+            }
+
             // Synchronize the selected path planner.
             if (telemetry.planner_algorithm) {
                 applyPlannerAlgorithmUI(telemetry.planner_algorithm);
+            }
+
+            // Synchronize the selected controller mode.
+            if (telemetry.controller_mode) {
+                applyControllerModeUI(telemetry.controller_mode);
             }
 
             // Sync Control Mode from Backend
@@ -1012,6 +1178,56 @@
             } catch (error) {
                 console.error("Planner selection error:", error);
                 log("[PLANNER] Unable to change algorithm.", "warn");
+            }
+        }
+
+        /* ============================================================
+           CONTROLLER SELECTION (STANDARD / IMPROVED / RPP)
+        ============================================================ */
+        let controllerMode = "rpp";
+
+        function applyControllerModeUI(mode) {
+            controllerMode = mode;
+
+            const btnStd = document.getElementById("btnCtrlStandard");
+            const btnImp = document.getElementById("btnCtrlImproved");
+            const btnRpp = document.getElementById("btnCtrlRPP");
+            const label = document.getElementById("hudControllerMode");
+
+            if (!btnStd || !btnImp || !btnRpp || !label) return;
+
+            btnStd.classList.toggle("active-manual", mode === "standard");
+            btnImp.classList.toggle("active-voice", mode === "improved");
+            btnRpp.classList.toggle("active-voice", mode === "rpp");
+
+            label.textContent = {
+                standard: "STANDARD PP",
+                improved: "IMPROVED PP",
+                rpp: "RPP (REGULATED)"
+            }[mode] || "RPP";
+        }
+
+        async function setControllerMode(mode) {
+            if (!["standard", "improved", "rpp"].includes(mode)) return;
+
+            try {
+                const response = await fetch("/api/controller", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ mode })
+                });
+
+                if (!response.ok) {
+                    throw new Error("Controller mode selection failed: " + response.status);
+                }
+
+                const data = await response.json();
+                applyControllerModeUI(data.mode);
+
+                log("[CONTROLLER] Selected " + data.mode.toUpperCase(), "info");
+            } catch (error) {
+                console.error("Controller mode selection error:", error);
+                log("[CONTROLLER] Unable to change controller mode.", "warn");
             }
         }
 
@@ -1325,6 +1541,59 @@
             }
         }
 
+        /* Dynamic Obstacle Controls (Method A: Map Canvas Placement & Clear All) */
+        function toggleObstacleMode() {
+            obstaclePlacementMode = !obstaclePlacementMode;
+            const btn = document.getElementById('btnPlaceObstacle');
+            if (obstaclePlacementMode) {
+                btn.classList.add('active-obstacle');
+                btn.textContent = '[ 🧱 CLICK MAP TO DROP ]';
+                log('[OBSTACLE] Placement mode ON: Click anywhere on the map canvas to drop an obstacle.', 'warn');
+            } else {
+                btn.classList.remove('active-obstacle');
+                btn.textContent = '[ 🧱 PLACE OBSTACLE (O) ]';
+                log('[OBSTACLE] Placement mode OFF: Map clicks now dispatch navigation goals.', 'info');
+            }
+        }
+
+        async function placeObstacleAt(x, y) {
+            log(`[OBSTACLE] 🧱 Spawning obstacle at (${x.toFixed(2)}, ${y.toFixed(2)})...`, 'warn');
+            try {
+                const res = await fetch('/api/spawn_obstacle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ x: parseFloat(x), y: parseFloat(y) })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    const gzX = data.obstacle.gz_x !== undefined ? data.obstacle.gz_x : (x - 2.0);
+                    const gzY = data.obstacle.gz_y !== undefined ? data.obstacle.gz_y : (y - 0.5);
+                    log(`[OBSTACLE] Placed #${data.obstacle.id} @ Map (${x.toFixed(2)}, ${y.toFixed(2)}) | Gazebo (${gzX.toFixed(2)}, ${gzY.toFixed(2)}). Re-routing!`, 'danger');
+                    fetchStatus();
+                }
+            } catch (err) {
+                log('[ERR] Failed to spawn dynamic obstacle', 'danger');
+            }
+        }
+
+        async function clearAllObstacles() {
+            log('[OBSTACLE] 🧹 Clearing all dynamic obstacles...', 'info');
+            try {
+                const res = await fetch('/api/clear_obstacles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    log(`[OBSTACLE] Cleared ${data.cleared || 0} dynamic obstacle(s). Path restored!`, 'success');
+                    fetchStatus();
+                }
+            } catch (err) {
+                log('[ERR] Failed to clear dynamic obstacles', 'danger');
+            }
+        }
+
         function log(msg, type) {
             const box = document.getElementById('logBox');
             const item = document.createElement('div');
@@ -1345,6 +1614,7 @@
         document.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
             if (e.key === 'p' || e.key === 'P') togglePatrol();
+            if (e.key === 'o' || e.key === 'O') toggleObstacleMode();
             if (e.key === 'c' || e.key === 'C' || e.code === 'Space') {
                 e.preventDefault();
                 emergencyStop();
