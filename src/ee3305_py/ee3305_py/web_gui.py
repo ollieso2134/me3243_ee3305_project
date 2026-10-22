@@ -321,7 +321,7 @@ class WebGUINode(Node):
 
     def setPlannerAlgorithm(self, algorithm: str):
         algorithm = algorithm.strip().lower()
-        if algorithm not in ("dijkstra", "astar"):
+        if algorithm not in ("dijkstra", "astar", "theta"):
             return False
 
         msg = String()

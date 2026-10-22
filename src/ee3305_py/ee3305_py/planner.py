@@ -12,6 +12,7 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid, Path
 from std_msgs.msg import String
 from ee3305_py.astar_planner import astar_search
+from ee3305_py.theta_planner import theta_search
 
 
 class DijkstraNode:
@@ -99,7 +100,7 @@ class Planner(Node):
     def callbackSubPlannerAlgorithm_(self, msg: String):
         algorithm = msg.data.strip().lower()
 
-        if algorithm not in ("dijkstra", "astar"):
+        if algorithm not in ("dijkstra", "astar", "theta"):
             self.get_logger().warn(
                 f"Unsupported planner algorithm: {algorithm}"
             )
@@ -160,7 +161,12 @@ class Planner(Node):
         # Run exactly one algorithm for this planning request.
         self.has_new_request_ = False
 
-        if self.algorithm_ == "astar":
+        if self.algorithm_ == "theta":
+            self.theta_(
+                self.rbt_x_, self.rbt_y_,
+                self.goal_x_, self.goal_y_
+            )
+        elif self.algorithm_ == "astar":
             self.astar_(
                 self.rbt_x_, self.rbt_y_,
                 self.goal_x_, self.goal_y_
@@ -267,6 +273,74 @@ class Planner(Node):
             f"A* Path Found from Rbt @ ({start_x:.3f}, {start_y:.3f}) "
             f"to Goal @ ({goal_x:.3f}, {goal_y:.3f}) "
             f"with {len(path_cells)} waypoints."
+        )
+
+
+
+    # Theta* planner adapter with path interpolation.
+    def theta_(self, start_x, start_y, goal_x, goal_y):
+        start = self.XYToCR_(start_x, start_y)
+        goal = self.XYToCR_(goal_x, goal_y)
+
+        path_cells = theta_search(
+            costmap=self.costmap_,
+            width=self.costmap_cols_,
+            height=self.costmap_rows_,
+            resolution=self.costmap_resolution_,
+            start=start,
+            goal=goal,
+            max_access_cost=self.max_access_cost_,
+        )
+
+        if path_cells is None:
+            self.get_logger().warn("Theta*: No Path Found!")
+            return
+
+        msg_path = Path()
+        msg_path.header.stamp = self.get_clock().now().to_msg()
+        msg_path.header.frame_id = "map"
+
+        # Original Theta* route in world coordinates.
+        sparse_points = [
+            self.CRToXY_(c, r) for c, r in path_cells
+        ]
+
+        # Densify Theta* only for Pure Pursuit compatibility.
+        spacing = min(0.05, self.costmap_resolution_)
+        dense_points = [sparse_points[0]]
+
+        from math import ceil
+
+        for (x1, y1), (x2, y2) in zip(
+            sparse_points, sparse_points[1:]
+        ):
+            dx = x2 - x1
+            dy = y2 - y1
+            length = hypot(dx, dy)
+
+            steps = max(1, ceil(length / spacing))
+
+            for i in range(1, steps + 1):
+                t = i / steps
+                dense_points.append((
+                    x1 + t * dx,
+                    y1 + t * dy
+                ))
+
+        for x, y in dense_points:
+            pose = PoseStamped()
+            pose.header = msg_path.header
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.w = 1.0
+            msg_path.poses.append(pose)
+
+        self.pub_path_.publish(msg_path)
+
+        self.get_logger().info(
+            f"Theta* Path Found: "
+            f"{len(sparse_points)} original waypoints, "
+            f"{len(dense_points)} interpolated waypoints."
         )
 
     # Runs the path planning algorithm based on the world coordinates.

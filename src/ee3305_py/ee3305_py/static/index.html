@@ -509,6 +509,11 @@
                                 onclick="setPlannerAlgorithm('astar')">
                             [ A* ]
                         </button>
+                        <button class="mode-toggle-btn"
+                                id="btnTheta"
+                                onclick="setPlannerAlgorithm('theta')">
+                            [ THETA* ]
+                        </button>
                     </div>
 
                     <!-- Manual Controls Area (Hidden when in Voice Control mode) -->
@@ -956,7 +961,7 @@
            CONTROL MODE SWITCHING (MANUAL vs VOICE)
         ============================================================ */
         /* ============================================================
-           PATH PLANNER SELECTION (DIJKSTRA / A*)
+           PATH PLANNER SELECTION (DIJKSTRA / A* / THETA*)
         ============================================================ */
         let plannerAlgorithm = "dijkstra";
 
@@ -965,18 +970,24 @@
 
             const btnD = document.getElementById("btnDijkstra");
             const btnA = document.getElementById("btnAStar");
+            const btnT = document.getElementById("btnTheta");
             const label = document.getElementById("hudPlannerAlgorithm");
 
-            if (!btnD || !btnA || !label) return;
+            if (!btnD || !btnA || !btnT || !label) return;
 
             btnD.classList.toggle("active-manual", algorithm === "dijkstra");
             btnA.classList.toggle("active-voice", algorithm === "astar");
+            btnT.classList.toggle("active-voice", algorithm === "theta");
 
-            label.textContent = algorithm === "astar" ? "A*" : "DIJKSTRA";
+            label.textContent = {
+                dijkstra: "DIJKSTRA",
+                astar: "A*",
+                theta: "THETA*"
+            }[algorithm] || "DIJKSTRA";
         }
 
         async function setPlannerAlgorithm(algorithm) {
-            if (!["dijkstra", "astar"].includes(algorithm)) return;
+            if (!["dijkstra", "astar", "theta"].includes(algorithm)) return;
 
             try {
                 const response = await fetch("/api/planner", {
