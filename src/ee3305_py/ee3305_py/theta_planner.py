@@ -1,16 +1,20 @@
 """Theta* any-angle path planning for the EE3305 occupancy grid."""
 
 from heapq import heappush, heappop
+from functools import lru_cache
 from math import hypot, inf
 
 
 def theta_search(costmap, width, height, resolution,
-                 start, goal, max_access_cost=100):
+                 start, goal, max_access_cost=100, stats=None):
 
     if width <= 0 or height <= 0 or resolution <= 0:
         return None
     if len(costmap) < width * height:
         return None
+
+    if stats is not None:
+        stats["nodes_expanded"] = 0
 
     def traversable(c, r):
         if not (0 <= c < width and 0 <= r < height):
@@ -28,8 +32,20 @@ def theta_search(costmap, width, height, resolution,
             goal[0] - node[0], goal[1] - node[1]
         )
 
+
+    # Precompute accessibility and costs once per planning request.
+    cell_count = width * height
+    weights = [
+        cost + 1.0 for cost in costmap[:cell_count]
+    ]
+    accessible = [
+        0 <= cost <= max_access_cost
+        for cost in costmap[:cell_count]
+    ]
+
+    @lru_cache(maxsize=32768)
     def line_cost(a, b):
-        """Weighted line traversal with obstacle and corner checks."""
+        """Fast weighted grid traversal with corner checks."""
         x, y = a
         dx = b[0] - x
         dy = b[1] - y
@@ -40,51 +56,66 @@ def theta_search(costmap, width, height, resolution,
         sx = (dx > 0) - (dx < 0)
         sy = (dy > 0) - (dy < 0)
 
-        tx = 0.5 / abs(dx) if dx else inf
-        ty = 0.5 / abs(dy) if dy else inf
-        dtx = 1.0 / abs(dx) if dx else inf
-        dty = 1.0 / abs(dy) if dy else inf
+        ax = abs(dx)
+        ay = abs(dy)
+
+        tx = 0.5 / ax if dx else inf
+        ty = 0.5 / ay if dy else inf
+        dtx = 1.0 / ax if dx else inf
+        dty = 1.0 / ay if dy else inf
 
         distance = resolution * hypot(dx, dy)
         previous_t = 0.0
-        total_cost = 0.0
+        total = 0.0
 
         while True:
-            if not traversable(x, y):
+            if x < 0 or x >= width or y < 0 or y >= height:
+                return inf
+
+            idx = y * width + x
+
+            if not accessible[idx]:
                 return inf
 
             next_t = min(tx, ty, 1.0)
-            cell_cost = costmap[y * width + x]
 
-            total_cost += (
+            total += (
                 (next_t - previous_t)
                 * distance
-                * (cell_cost + 1)
+                * weights[idx]
             )
 
             if next_t >= 1.0:
                 break
 
             if abs(tx - ty) < 1e-12:
-                # Prevent cutting diagonally through blocked corners.
-                if not traversable(x + sx, y):
+                nx = x + sx
+                ny = y + sy
+
+                if not (
+                    0 <= nx < width and
+                    0 <= ny < height and
+                    accessible[y * width + nx] and
+                    accessible[ny * width + x]
+                ):
                     return inf
-                if not traversable(x, y + sy):
-                    return inf
-                x += sx
-                y += sy
+
+                x = nx
+                y = ny
                 tx += dtx
                 ty += dty
+
             elif tx < ty:
                 x += sx
                 tx += dtx
+
             else:
                 y += sy
                 ty += dty
 
             previous_t = next_t
 
-        return total_cost
+        return total
 
     neighbors = [
         (1, 0), (1, 1), (0, 1), (-1, 1),
@@ -113,6 +144,9 @@ def theta_search(costmap, width, height, resolution,
             return path[::-1]
 
         closed.add(current)
+
+        if stats is not None:
+            stats["nodes_expanded"] += 1
         c, r = current
 
         for dc, dr in neighbors:

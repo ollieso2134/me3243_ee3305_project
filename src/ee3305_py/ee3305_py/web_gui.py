@@ -12,6 +12,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import numpy as np
 from PIL import Image
 
+from ee3305_py.planner_comparison import compare_all
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
@@ -79,6 +80,23 @@ class WebGUINode(Node):
         )
         self.sub_map_ = self.create_subscription(
             OccupancyGrid, "map", self.callbackMap_, qos_map
+        )
+
+        # Separate read-only comparison costmap.
+        self.compare_costmap_ = None
+        self.compare_map_info_ = None
+        self.compare_lock_ = threading.RLock()
+
+        self.declare_parameter("max_access_cost", 90)
+        self.compare_max_cost_ = self.get_parameter(
+            "max_access_cost"
+        ).value
+
+        self.sub_compare_costmap_ = self.create_subscription(
+            OccupancyGrid,
+            "global_costmap",
+            self.callbackCompareCostmap_,
+            qos_map,
         )
 
         # AI chat bridge state: ROS messages never block the HTTP server.
@@ -207,6 +225,44 @@ class WebGUINode(Node):
             )
         except Exception as e:
             self.get_logger().error(f"Error processing /map message: {e}")
+
+    def callbackCompareCostmap_(self, msg):
+        with self.compare_lock_:
+            self.compare_costmap_ = list(msg.data)
+            self.compare_map_info_ = (
+                msg.info.width,
+                msg.info.height,
+                msg.info.resolution,
+                msg.info.origin.position.x,
+                msg.info.origin.position.y,
+            )
+
+    def comparePlannersForRoom(self, room_id):
+        room = next(
+            (r for r in self.room_waypoints_ if r["id"] == room_id),
+            None,
+        )
+        if room is None:
+            raise ValueError("Invalid room")
+
+        with self.compare_lock_:
+            if self.compare_costmap_ is None:
+                raise RuntimeError("Global costmap not received")
+
+            costmap = self.compare_costmap_[:]
+            w, h, res, ox, oy = self.compare_map_info_
+
+        start = (self.rbt_x_, self.rbt_y_)
+        goal = (room["x"], room["y"])
+
+        result = compare_all(
+            costmap, w, h, res, ox, oy,
+            start, goal, self.compare_max_cost_,
+        )
+
+        result["room"] = room_id
+        result["room_name"] = room["name"]
+        return result
 
     def sendRoomGoal(self, room_id: int):
         stop_msg = Bool()
@@ -479,6 +535,32 @@ class WebHandler(BaseHTTPRequestHandler):
                 global_node.emergencyStop()
             self._set_headers("application/json")
             self.wfile.write(json.dumps({"status": "stopped"}).encode("utf-8"))
+
+        elif self.path == "/api/compare_planners":
+            if not global_node:
+                self.send_error(503, "Node not ready")
+                return
+
+            try:
+                room_id = int(req_data.get("room", 0))
+                result = global_node.comparePlannersForRoom(room_id)
+            except (ValueError, TypeError):
+                self.send_error(400, "Invalid room")
+                return
+            except RuntimeError as exc:
+                self.send_error(503, str(exc))
+                return
+            except Exception as exc:
+                global_node.get_logger().error(
+                    f"Planner comparison failed: {exc}"
+                )
+                self.send_error(500, "Comparison failed")
+                return
+
+            self._set_headers("application/json")
+            self.wfile.write(
+                json.dumps(result).encode("utf-8")
+            )
 
         elif self.path == "/api/planner":
             if not global_node:

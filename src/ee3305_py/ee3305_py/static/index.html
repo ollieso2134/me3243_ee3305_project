@@ -514,6 +514,11 @@
                                 onclick="setPlannerAlgorithm('theta')">
                             [ THETA* ]
                         </button>
+                        <button class="mode-toggle-btn"
+                                id="btnComparePlanners"
+                                onclick="comparePlanners()">
+                            [ COMPARE PLANNERS ]
+                        </button>
                     </div>
 
                     <!-- Manual Controls Area (Hidden when in Voice Control mode) -->
@@ -975,9 +980,9 @@
 
             if (!btnD || !btnA || !btnT || !label) return;
 
-            btnD.classList.toggle("active-manual", algorithm === "dijkstra");
-            btnA.classList.toggle("active-voice", algorithm === "astar");
-            btnT.classList.toggle("active-voice", algorithm === "theta");
+            btnD.classList.toggle("active-manual", !comparisonMode && algorithm === "dijkstra");
+            btnA.classList.toggle("active-voice", !comparisonMode && algorithm === "astar");
+            btnT.classList.toggle("active-voice", !comparisonMode && algorithm === "theta");
 
             label.textContent = {
                 dijkstra: "DIJKSTRA",
@@ -1061,7 +1066,189 @@
         /* ============================================================
            ACTIONS: ROOM DISPATCH, GOALS, PATROL, E-STOP
         ============================================================ */
+
+        // Planner comparison mode: never dispatches navigation goals.
+        let comparisonMode = false;
+        let comparisonBusy = false;
+
+        function refreshComparisonModeUI() {
+            const btn = document.getElementById("btnComparePlanners");
+            if (!btn) return;
+
+            btn.classList.toggle("active-voice", comparisonMode);
+            btn.textContent = comparisonMode
+                ? "[ SELECT ROOM ]"
+                : "[ COMPARE PLANNERS ]";
+
+            applyPlannerAlgorithmUI(plannerAlgorithm);
+        }
+
+        function comparePlanners() {
+            if (comparisonBusy) return;
+
+            comparisonMode = !comparisonMode;
+            refreshComparisonModeUI();
+
+            if (comparisonMode) {
+                log("[COMPARE] Select RM1-RM6 to compare planners.", "info");
+            } else {
+                log("[COMPARE] Comparison mode cancelled.", "info");
+            }
+        }
+
+        function showPlannerComparisonPopup(data) {
+            document.getElementById("plannerComparisonOverlay")?.remove();
+
+            const overlay = document.createElement("div");
+            overlay.id = "plannerComparisonOverlay";
+            overlay.style.cssText = `
+                position:fixed; inset:0; z-index:99999;
+                background:rgba(0,0,0,0.75);
+                display:flex; align-items:center;
+                justify-content:center; padding:15px;
+            `;
+
+            const panel = document.createElement("div");
+            panel.style.cssText = `
+                width:min(760px,95vw); max-height:85vh;
+                overflow:auto; background:#080e12;
+                border:1px solid #00dddd; border-radius:8px;
+                padding:22px; color:#d6e8ed;
+                font-family:'JetBrains Mono',monospace;
+                box-shadow:0 0 30px rgba(0,221,221,0.12);
+            `;
+
+            const heading = document.createElement("h3");
+            heading.textContent = "PLANNER COMPARISON";
+            heading.style.cssText = "color:#00dddd;margin:0 0 12px;";
+            panel.appendChild(heading);
+
+            const details = document.createElement("p");
+            details.style.cssText = "font-size:12px;color:#8aabb5;";
+            details.textContent =
+                `CURRENT POSE (${data.start.map(v => v.toFixed(2)).join(", ")}) ` +
+                `→ ROOM ${data.room} ` +
+                `(${data.goal.map(v => v.toFixed(2)).join(", ")})`;
+            panel.appendChild(details);
+
+            const table = document.createElement("table");
+            table.style.cssText = `
+                width:100%; border-collapse:collapse;
+                font-size:12px; text-align:center;
+            `;
+
+            const names = ["dijkstra", "astar", "theta"];
+            const labels = ["DIJKSTRA", "A*", "THETA*"];
+            const colors = ["#00ffff", "#ffc857", "#00ff88"];
+
+            const rows = [
+                ["Path found", "found", v => v ? "YES" : "NO"],
+                ["Planning time (ms)", "planning_ms", v => Number(v).toFixed(3)],
+                ["Path length (m)", "length_m", v => Number(v).toFixed(3)],
+                ["Nodes expanded", "nodes_expanded", v => v],
+                ["Original waypoints", "waypoints", v => v],
+                ["Turns (>5°)", "turns", v => v],
+            ];
+
+            function makeCell(tr, text, color, header=false) {
+                const cell = document.createElement(header ? "th" : "td");
+                cell.textContent = String(text);
+                cell.style.cssText = `
+                    padding:10px 6px; border-bottom:1px solid #284049;
+                    color:${color}; font-weight:${header ? "bold" : "normal"};
+                `;
+                tr.appendChild(cell);
+            }
+
+            const trHead = document.createElement("tr");
+            makeCell(trHead, "METRIC", "#b4c8cf", true);
+            names.forEach((name, i) => {
+                makeCell(trHead, labels[i], colors[i], true);
+            });
+            table.appendChild(trHead);
+
+            rows.forEach(([label, key, format]) => {
+                const tr = document.createElement("tr");
+                makeCell(tr, label, "#b4c8cf");
+                names.forEach((name, i) => {
+                    const result = data.results[name];
+                    const value = result?.[key];
+                    makeCell(
+                        tr,
+                        value === undefined ? "N/A" : format(value),
+                        colors[i]
+                    );
+                });
+                table.appendChild(tr);
+            });
+
+            panel.appendChild(table);
+
+            const note = document.createElement("p");
+            note.textContent =
+                "STATIC PLANNING COMPARISON ONLY — ROBOT NOT DISPATCHED. " +
+                "Theta* metrics use original waypoints before interpolation.";
+            note.style.cssText = `
+                font-size:10px;color:#90a8b2;
+                margin:18px 0;
+            `;
+            panel.appendChild(note);
+
+            const exit = document.createElement("button");
+            exit.textContent = "[ EXIT ]";
+            exit.style.cssText = `
+                display:block; margin:auto; padding:10px 36px;
+                background:#06191e; border:1px solid #00dddd;
+                color:#00dddd; cursor:pointer;
+                font-family:inherit;
+            `;
+
+            exit.onclick = () => {
+                overlay.remove();
+                comparisonMode = false;
+                refreshComparisonModeUI();
+                log("[COMPARE] Returned to normal navigation mode.", "info");
+            };
+
+            panel.appendChild(exit);
+            overlay.appendChild(panel);
+            document.body.appendChild(overlay);
+        }
+
+        async function runPlannerComparison(roomId) {
+            if (comparisonBusy) return;
+
+            comparisonBusy = true;
+            log(`[COMPARE] Calculating planners for Room ${roomId}...`, "info");
+
+            try {
+                const response = await fetch("/api/compare_planners", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({room: roomId})
+                });
+
+                if (!response.ok) {
+                    throw new Error("Comparison failed: HTTP " + response.status);
+                }
+
+                const data = await response.json();
+                showPlannerComparisonPopup(data);
+
+            } catch (error) {
+                console.error(error);
+                log("[COMPARE] " + error.message, "danger");
+            } finally {
+                comparisonBusy = false;
+            }
+        }
+
         async function sendRoom(roomId) {
+            if (comparisonMode) {
+                await runPlannerComparison(roomId);
+                return;
+            }
+
             const rm = telemetry.rooms.find(r => r.id === roomId);
             if (rm) {
                 telemetry.goal = { x: rm.x, y: rm.y };

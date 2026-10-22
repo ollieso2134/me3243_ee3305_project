@@ -17,7 +17,7 @@ def astar_search(
     resolution,
     start,
     goal,
-    max_access_cost=100,
+    max_access_cost=100, stats=None,
 ):
     """
     Find a minimum-cost path through an 8-connected occupancy grid.
@@ -36,6 +36,9 @@ def astar_search(
 
     def in_bounds(c, r):
         return 0 <= c < width and 0 <= r < height
+
+    if stats is not None:
+        stats["nodes_expanded"] = 0
 
     def traversable(c, r):
         if not in_bounds(c, r):
@@ -101,6 +104,9 @@ def astar_search(
             return path
 
         closed.add(current)
+
+        if stats is not None:
+            stats["nodes_expanded"] += 1
 
         c, r = current
 
