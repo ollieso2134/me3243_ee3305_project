@@ -14,3 +14,7 @@
 [05_Planner.md](docs/05_Planner.md)
 
 [06_Bash_Scripts.md](docs/06_Bash_Scripts.md)
+
+## Project Demonstration
+
+🎥 [Watch / Download Our 5-Minute Demo](https://github.com/ollieso2134/me3243_ee3305_project/releases/tag/v1.0.0)
